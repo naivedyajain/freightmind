@@ -1,0 +1,972 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FreightMind — agentic assistant for logistics</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<style>
+:root{
+  --bg:#f4f6f8; --card:#fff; --line:#e5eaef; --line2:#eef2f5;
+  --ink:#16202b; --ink2:#576571; --ink3:#8b98a5;
+  --teal:#0f8368; --teal2:#e5f4ef; --teald:#0b6650;
+  --amber:#b8791a; --amber2:#fbf1e0; --red:#c4463a; --red2:#fbecea; --blue:#3f7fc4;
+  --mono:ui-monospace,'SFMono-Regular',Menlo,Consolas,monospace;
+  --sans:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:14px;line-height:1.55;-webkit-font-smoothing:antialiased}
+#root{height:100vh}
+.shell{display:flex;flex-direction:column;height:100vh;max-width:1180px;margin:0 auto;background:var(--bg)}
+
+.hdr{display:flex;align-items:center;justify-content:space-between;padding:13px 22px;border-bottom:1px solid var(--line);background:var(--card)}
+.brand{display:flex;align-items:baseline;gap:10px}
+.brand h1{font-size:19px;font-weight:700;letter-spacing:-.4px}
+.brand h1 span{color:var(--teal)}
+.brand em{font-size:11.5px;color:var(--ink3);font-style:normal}
+.hdrr{display:flex;align-items:center;gap:12px}
+.msel{background:var(--card);border:1px solid var(--line);border-radius:7px;padding:6px 8px;font-family:var(--mono);font-size:11px;color:var(--ink2)}
+.kin{display:flex;gap:6px}
+.kin input{border:1px solid var(--line);border-radius:7px;padding:7px 10px;font-family:var(--mono);font-size:12px;width:150px}
+.kin input:focus{outline:none;border-color:var(--teal)}
+.kin button{background:var(--teal);color:#fff;border:none;border-radius:7px;padding:7px 13px;font-size:12px;font-weight:600;cursor:pointer}
+.kok{font-size:12px;color:var(--teal);cursor:pointer;font-weight:500}
+
+.body{display:flex;flex:1;min-height:0}
+.rail{width:236px;border-right:1px solid var(--line);padding:16px 14px;overflow-y:auto;background:var(--card);flex-shrink:0}
+.rgroup{margin-bottom:20px}
+.rlabel{font-size:10.5px;text-transform:uppercase;letter-spacing:.6px;color:var(--ink3);margin-bottom:8px;font-weight:600;display:flex;align-items:center;gap:6px}
+.soon{background:var(--amber2);color:var(--amber);font-size:8.5px;padding:1px 6px;border-radius:4px;letter-spacing:.3px}
+.ract{display:block;width:100%;text-align:left;background:var(--card);border:1px solid var(--line);border-radius:9px;padding:9px 11px;margin-bottom:7px;cursor:pointer;transition:.12s}
+.ract:hover{border-color:var(--teal);background:var(--teal2)}
+.ract.on{border-color:var(--teal);background:var(--teal2)}
+.ract b{display:block;font-size:12.5px;color:var(--ink);font-weight:600}
+.ract i{font-style:normal;font-size:11px;color:var(--ink3)}
+.ract.subtle b{font-weight:500}
+.costbox{background:#0f2b24;border-radius:10px;padding:12px 13px;color:#fff}
+.costn{font-size:22px;font-weight:700;font-family:var(--mono);color:#5fe3c0}
+.costl{font-size:10.5px;color:#9dc9be;margin-top:1px}
+.costproj{font-size:11px;color:#c5e8df;margin-top:7px;padding-top:7px;border-top:1px solid #1c4034}
+.conn{background:#fafbfc;border:1px solid var(--line);border-radius:8px;padding:8px 11px;font-size:12px;color:var(--ink3);margin-bottom:6px}
+
+.main{flex:1;display:flex;flex-direction:column;min-width:0}
+.thread{flex:1;overflow-y:auto;padding:22px 26px 10px}
+.welcome{max-width:560px;margin:24px auto 0;text-align:center}
+.welcome h2{font-size:22px;font-weight:600;letter-spacing:-.4px;margin-bottom:10px}
+.welcome p{font-size:13.5px;color:var(--ink2);line-height:1.6;margin-bottom:18px}
+.wex{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin-bottom:16px}
+.wdoc{font-size:12.5px;color:var(--ink3)}
+.wdoc .link,.wdoc a{color:var(--teal);cursor:pointer;text-decoration:none}
+.wdoc .link:hover,.wdoc a:hover{text-decoration:underline}
+.trybox{background:var(--teal2);border:1px solid #bfe3d6;border-radius:12px;padding:16px 18px;margin-top:20px}
+.tryhead{font-size:13px;font-weight:600;color:var(--teald);margin-bottom:11px}
+.tryrow{display:flex;gap:8px;justify-content:center;flex-wrap:wrap}
+.trybtn{border:none;border-radius:8px;padding:9px 15px;font-size:12.5px;font-weight:600;cursor:pointer;text-decoration:none;display:inline-block}
+.trybtn.dl{background:var(--teal);color:#fff}
+.trybtn.dl2{background:#fff;color:var(--teal);border:1px solid var(--teal)}
+.trybtn.up{background:#fff;color:var(--teald);border:1px solid #bfe3d6}
+.trybtn:hover{filter:brightness(1.05)}
+.tryhint{font-size:11.5px;color:var(--teald);margin-top:10px;opacity:.85}
+
+.msg{margin-bottom:16px;display:flex}
+.msg.user{justify-content:flex-end}
+.msg.ai{justify-content:flex-start}
+.bub{max-width:82%;border-radius:14px;padding:13px 16px;font-size:14px;line-height:1.55}
+.msg.user .bub{background:var(--teal);color:#fff;border-bottom-right-radius:4px}
+.msg.ai .bub{background:var(--card);border:1px solid var(--line);border-bottom-left-radius:4px;max-width:88%}
+.bub.thinking{color:var(--ink3);font-size:13px;display:flex;align-items:center;gap:8px}
+.bub.err{background:var(--red2);border-color:#e6b5ae;color:var(--red)}
+.dot3 i{display:inline-block;width:5px;height:5px;border-radius:50%;background:var(--ink3);margin:0 1px;animation:bl 1.2s infinite}
+.dot3 i:nth-child(2){animation-delay:.2s}.dot3 i:nth-child(3){animation-delay:.4s}
+@keyframes bl{0%,60%,100%{opacity:.3}30%{opacity:1}}
+.atext{font-size:14px;margin-bottom:4px}
+.atext.refuse{color:var(--amber)}
+.atext b{font-weight:600}
+.warntext{color:var(--amber);font-weight:500}
+
+.chart{margin:12px 0;padding:12px;background:#fafbfc;border-radius:9px}
+.tw{margin:10px 0;border:1px solid var(--line);border-radius:9px;overflow:hidden}
+.tw table{border-collapse:collapse;width:100%;font-size:12.5px}
+.tw th,.tw td{text-align:left;padding:8px 11px;border-bottom:1px solid var(--line2)}
+.tw th{background:#fafbfc;font-size:10.5px;text-transform:uppercase;letter-spacing:.4px;color:var(--ink3);font-weight:600}
+.tw tr:last-child td{border-bottom:none}
+.tw .num{text-align:right;font-family:var(--mono)}
+.more{padding:7px 11px;font-size:11px;color:var(--ink3);background:#fafbfc}
+
+.follows{display:flex;flex-wrap:wrap;gap:7px;margin:8px 0 0 2px}
+.fchip{background:var(--card);border:1px solid var(--line);border-radius:15px;padding:6px 13px;font-size:12.5px;color:var(--teal);cursor:pointer;transition:.12s}
+.fchip:hover{background:var(--teal2);border-color:var(--teal)}
+
+.exgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:12px 0}
+.exf{background:#fafbfc;border:1px solid var(--line);border-radius:8px;padding:9px 11px}
+.exf.low{border-color:#e6c896;background:var(--amber2)}
+.exk{font-size:10.5px;text-transform:uppercase;letter-spacing:.4px;color:var(--ink3);margin-bottom:3px}
+.exv{font-size:14px;font-weight:600;font-family:var(--mono);display:flex;align-items:center;gap:7px}
+.confb{font-size:9.5px;font-family:var(--mono);color:var(--ink3);font-weight:400}
+.confb.warn{color:var(--amber)}
+.exfix{display:flex;flex-direction:column;gap:5px}
+.fixin{border:1px solid var(--amber);border-radius:6px;padding:6px 9px;font-family:var(--mono);font-size:13px;width:100%}
+.fixin:focus{outline:none;border-color:var(--teald)}
+.stored{margin-top:10px;font-size:12.5px;color:var(--teal);font-weight:500}
+
+.wfrun{margin:12px 0;display:flex;flex-direction:column;gap:7px}
+.wfstep{display:flex;align-items:center;gap:11px;background:#fafbfc;border:1px solid var(--line);border-radius:9px;padding:10px 13px}
+.wfstep.paused{background:#f3f0fb;border-color:#d9cef2}
+.wfic{width:20px;height:20px;border-radius:50%;background:var(--teal2);color:var(--teal);display:flex;align-items:center;justify-content:center;font-size:12px;flex-shrink:0}
+.wfstep.paused .wfic{background:#e6ddf7;color:#7857c8}
+.wfmid{flex:1}.wfmid b{font-size:13px}.wfd{font-size:11.5px;color:var(--ink3)}
+.wfbadge{font-family:var(--mono);font-size:9.5px;padding:2px 7px;border-radius:5px;background:var(--teal2);color:var(--teal)}
+.wfbadge.paused{background:#e6ddf7;color:#7857c8}
+.wfsum{background:var(--teal2);border-radius:9px;padding:11px 13px;font-size:13px;color:var(--teald);line-height:1.55}
+.wfsum b{color:var(--teald);font-weight:700}
+
+.trace{margin-top:11px;border:1px solid var(--line);border-radius:8px;font-family:var(--mono);font-size:11px;overflow:hidden;background:#fbfcfd}
+.trace .th{display:flex;align-items:center;gap:7px;padding:8px 11px;color:var(--ink3);cursor:pointer;user-select:none}
+.trace .th b{color:var(--ink2);font-weight:600}
+.trace .th .ca{color:var(--teal)}
+.trace .th .tc{margin-left:auto}
+.trace .tb{border-top:1px solid var(--line2);padding:10px 11px;background:#fff}
+.trace .tb pre{color:#0a5a8a;white-space:pre-wrap;line-height:1.6;font-family:var(--mono);font-size:11px}
+.trace .tm{margin-top:7px;padding-top:7px;border-top:1px solid var(--line2);color:var(--ink3)}
+
+.composer{display:flex;align-items:center;gap:9px;padding:13px 26px 18px;border-top:1px solid var(--line);background:var(--bg)}
+.attach{background:var(--card);border:1px solid var(--line);border-radius:9px;width:40px;height:42px;font-size:16px;cursor:pointer;flex-shrink:0}
+.attach:hover{border-color:var(--teal)}
+.cin{flex:1;border:1px solid var(--line);border-radius:11px;padding:13px 16px;font-size:14px;background:var(--card)}
+.cin:focus{outline:none;border-color:var(--teal);box-shadow:0 0 0 3px var(--teal2)}
+.cin:disabled{background:#f0f2f4;color:var(--ink3)}
+.send{background:var(--teal);color:#fff;border:none;border-radius:11px;padding:0 22px;height:44px;font-size:14px;font-weight:600;cursor:pointer;flex-shrink:0}
+.send:disabled{opacity:.4;cursor:not-allowed}
+
+.btn{background:var(--teal);color:#fff;border:none;border-radius:8px;padding:9px 15px;font-size:13px;font-weight:600;cursor:pointer}
+.btn.sm{padding:7px 13px;font-size:12.5px}
+.btn.mt{margin-top:10px}
+.mt{margin-top:10px}
+
+.overlay{position:absolute;inset:0;background:rgba(15,25,35,.4);display:flex;align-items:center;justify-content:center;padding:30px;z-index:50}
+.ov{background:var(--card);border-radius:14px;max-width:620px;width:100%;max-height:82vh;overflow-y:auto;position:relative}
+.ovx{position:absolute;top:14px;right:18px;font-size:22px;color:var(--ink3);cursor:pointer;line-height:1}
+.ovc{padding:26px 28px}
+.ovc h2{font-size:19px;font-weight:600;margin-bottom:12px}
+.ovp{font-size:13.5px;color:var(--ink2);line-height:1.65;margin-bottom:12px}
+.ovp.ovnote{background:#fafbfc;border-left:3px solid var(--blue);border-radius:0 8px 8px 0;padding:11px 14px}
+.ontrow{display:grid;grid-template-columns:1fr 1fr 1fr;gap:9px;margin:14px 0}
+.ont{background:#fafbfc;border:1px solid var(--line);border-radius:9px;padding:11px}
+.ont h4{font-size:12.5px;color:var(--teal);margin-bottom:4px}
+.ont span{font-size:11px;color:var(--ink3);font-family:var(--mono);line-height:1.5}
+.dstep{display:flex;gap:12px;padding:10px 0;border-bottom:1px solid var(--line2)}
+.dstep:last-of-type{border-bottom:none}
+.dn{font-family:var(--mono);color:var(--teal);font-weight:700;width:22px;flex-shrink:0}
+.dstep b{font-size:13px}.dsay{font-size:12.5px;color:var(--ink3);font-style:italic;margin-top:3px}
+.spin{width:22px;height:22px;border:3px solid var(--line);border-top-color:var(--teal);border-radius:50%;animation:sp .8s linear infinite}
+@keyframes sp{to{transform:rotate(360deg)}}
+
+@media(max-width:820px){
+  .rail{display:none}
+  .bub{max-width:90%}
+  .exgrid{grid-template-columns:1fr}
+}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script>
+const {
+  useState,
+  useRef,
+  useEffect
+} = React;
+const API = window.FM_API_BASE || "";
+const money = n => "$" + Number(n).toLocaleString();
+const KEY_LS = "fm_key";
+
+// ---------- cost model (visible everywhere) ----------
+const RATES = {
+  "claude-sonnet-4-5": {
+    in: 3,
+    out: 15
+  },
+  "claude-haiku": {
+    in: 0.8,
+    out: 4
+  }
+};
+function costOf(model, inTok, outTok) {
+  const r = RATES[model] || RATES["claude-sonnet-4-5"];
+  return inTok / 1e6 * r.in + outTok / 1e6 * r.out;
+}
+
+// ---------- pure SVG bar chart ----------
+function Bars({
+  data,
+  fmt,
+  color = "#12876a"
+}) {
+  const max = Math.max(...data.map(d => d.value), 1);
+  const W = 520,
+    rh = 30,
+    lw = 150,
+    bw = W - lw - 72;
+  return /*#__PURE__*/React.createElement("svg", {
+    width: "100%",
+    viewBox: `0 0 ${W} ${data.length * rh + 8}`,
+    style: {
+      display: "block"
+    }
+  }, data.map((d, i) => {
+    const w = Math.max(2, d.value / max * bw),
+      y = i * rh + 5;
+    return /*#__PURE__*/React.createElement("g", {
+      key: i
+    }, /*#__PURE__*/React.createElement("text", {
+      x: lw - 10,
+      y: y + 15,
+      textAnchor: "end",
+      fontSize: "12",
+      fill: "#5a6b7d"
+    }, d.label), /*#__PURE__*/React.createElement("rect", {
+      x: lw,
+      y: y + 2,
+      width: w,
+      height: 18,
+      rx: "3",
+      fill: color
+    }), /*#__PURE__*/React.createElement("text", {
+      x: lw + w + 7,
+      y: y + 15,
+      fontSize: "11.5",
+      fill: "#3a4654",
+      fontFamily: "ui-monospace,monospace"
+    }, fmt ? fmt(d.value) : d.value));
+  }));
+}
+
+// ---------- one message card in the thread ----------
+function Card({
+  m,
+  onFollow,
+  onFixField
+}) {
+  if (m.type === "user") return /*#__PURE__*/React.createElement("div", {
+    className: "msg user"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "bub"
+  }, m.text));
+  if (m.type === "thinking") return /*#__PURE__*/React.createElement("div", {
+    className: "msg ai"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "bub thinking"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "dot3"
+  }, /*#__PURE__*/React.createElement("i", null), /*#__PURE__*/React.createElement("i", null), /*#__PURE__*/React.createElement("i", null)), " ", m.text));
+  if (m.type === "error") return /*#__PURE__*/React.createElement("div", {
+    className: "msg ai"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "bub err"
+  }, m.text));
+  if (m.type === "answer") {
+    const r = m.result;
+    const chartable = r.answerable && r.cols && r.cols.length === 2 && r.rows.length && r.rows.every(x => typeof x[r.cols[1]] === "number");
+    const chartData = chartable ? r.rows.slice(0, 8).map(x => ({
+      label: String(x[r.cols[0]]),
+      value: x[r.cols[1]]
+    })) : null;
+    const moneyCol = r.cols && /spend|total|charge|overcharge|amount|cost|detention|freight/i.test(r.cols[r.cols.length - 1]);
+    return /*#__PURE__*/React.createElement("div", {
+      className: "msg ai"
+    }, /*#__PURE__*/React.createElement("div", {
+      className: "bub"
+    }, r.answerable ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+      className: "atext"
+    }, r.rowCount === 0 ? "The query ran but nothing matched." : m.headline), chartData && /*#__PURE__*/React.createElement("div", {
+      className: "chart"
+    }, /*#__PURE__*/React.createElement(Bars, {
+      data: chartData,
+      fmt: moneyCol ? money : null
+    })), r.rows.length > 0 && /*#__PURE__*/React.createElement("div", {
+      className: "tw"
+    }, /*#__PURE__*/React.createElement("table", null, /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null, r.cols.map((c, i) => /*#__PURE__*/React.createElement("th", {
+      key: i,
+      className: typeof r.rows[0][c] === "number" ? "num" : ""
+    }, c)))), /*#__PURE__*/React.createElement("tbody", null, r.rows.slice(0, 12).map((row, i) => /*#__PURE__*/React.createElement("tr", {
+      key: i
+    }, r.cols.map((c, j) => /*#__PURE__*/React.createElement("td", {
+      key: j,
+      className: typeof row[c] === "number" ? "num" : ""
+    }, typeof row[c] === "number" && /spend|total|charge|overcharge|amount|cost|detention|freight|baf|thc/i.test(c) ? money(row[c]) : String(row[c]))))))), r.rows.length > 12 && /*#__PURE__*/React.createElement("div", {
+      className: "more"
+    }, "+", r.rowCount - 12, " more rows")), /*#__PURE__*/React.createElement(Trace, {
+      sql: r.sql,
+      rows: r.rowCount,
+      cost: m.cost
+    })) : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+      className: "atext refuse"
+    }, r.message), r.sql && /*#__PURE__*/React.createElement(Trace, {
+      sql: r.sql,
+      rows: 0,
+      cost: m.cost,
+      blocked: true
+    }))), m.follows && m.follows.length > 0 && /*#__PURE__*/React.createElement("div", {
+      className: "follows"
+    }, m.follows.map((f, i) => /*#__PURE__*/React.createElement("span", {
+      key: i,
+      className: "fchip",
+      onClick: () => onFollow(f)
+    }, f))));
+  }
+  if (m.type === "extraction") {
+    const f = m.fields,
+      c = m.confidence || {};
+    return /*#__PURE__*/React.createElement("div", {
+      className: "msg ai"
+    }, /*#__PURE__*/React.createElement("div", {
+      className: "bub"
+    }, /*#__PURE__*/React.createElement("div", {
+      className: "atext"
+    }, "Extracted ", /*#__PURE__*/React.createElement("b", null, m.count, " fields"), " from ", /*#__PURE__*/React.createElement("b", null, m.name), ". ", m.lowCount > 0 ? /*#__PURE__*/React.createElement("span", {
+      className: "warntext"
+    }, m.lowCount, " field needs your review.") : "All fields read cleanly."), /*#__PURE__*/React.createElement("div", {
+      className: "exgrid"
+    }, Object.entries(f.charges || {}).map(([k, v]) => {
+      const conf = c[k] != null ? c[k] : 0.95;
+      const low = conf < 0.7;
+      return /*#__PURE__*/React.createElement("div", {
+        key: k,
+        className: "exf" + (low ? " low" : "")
+      }, /*#__PURE__*/React.createElement("div", {
+        className: "exk"
+      }, k.replace(/_/g, " ")), low && m.editable ? /*#__PURE__*/React.createElement("div", {
+        className: "exfix"
+      }, /*#__PURE__*/React.createElement("input", {
+        className: "fixin",
+        defaultValue: v == null ? "" : v,
+        onBlur: e => onFixField(m.id, k, e.target.value)
+      }), /*#__PURE__*/React.createElement("span", {
+        className: "confb warn"
+      }, Math.round(conf * 100), "% · confirm or correct")) : /*#__PURE__*/React.createElement("div", {
+        className: "exv"
+      }, v == null ? "—" : typeof v === "number" ? money(v) : v, " ", /*#__PURE__*/React.createElement("span", {
+        className: "confb" + (low ? " warn" : "")
+      }, Math.round(conf * 100), "%")));
+    })), m.stored ? /*#__PURE__*/React.createElement("div", {
+      className: "stored"
+    }, "✓ Stored to freight data — now queryable and reconcilable") : /*#__PURE__*/React.createElement("button", {
+      className: "btn sm mt",
+      onClick: () => onFollow("__store__" + m.id)
+    }, m.lowCount > 0 ? "Confirm fields & store →" : "Store to freight data →"), m.cost && /*#__PURE__*/React.createElement(Trace, {
+      vision: true,
+      rows: m.count,
+      cost: m.cost,
+      sql: "vision model → structured JSON\nfields: invoice_id, shipment_id, charges[], confidence[]"
+    })), m.stored && /*#__PURE__*/React.createElement("div", {
+      className: "follows"
+    }, /*#__PURE__*/React.createElement("span", {
+      className: "fchip",
+      onClick: () => onFollow("__reconcile__" + ((m.fields && m.fields.shipment_id) || "SHP-1124"))
+    }, "Was this overcharged vs quote?"), /*#__PURE__*/React.createElement("span", {
+      className: "fchip",
+      onClick: () => onFollow("__scan__" + ((m.fields && m.fields.shipment_id) || "SHP-1124"))
+    }, "Any similar overcharges?")));
+  }
+
+  if (m.type === "reconcile") {
+    const d = m.data;
+    return /*#__PURE__*/React.createElement("div", { className: "msg ai" },
+      /*#__PURE__*/React.createElement("div", { className: "bub" },
+        /*#__PURE__*/React.createElement("div", { className: "atext" },
+          "Invoice ", /*#__PURE__*/React.createElement("b", null, d.invoice_id), " (", d.carrier, ", ", d.lane, ") was ",
+          /*#__PURE__*/React.createElement("b", { style: { color: d.gap > 0 ? "#c4463a" : "#0f8368" } }, d.gap > 0 ? money(d.gap) + " over" : "in line with"), " the quote."),
+        /*#__PURE__*/React.createElement("div", { className: "tw" },
+          /*#__PURE__*/React.createElement("table", null,
+            /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null,
+              /*#__PURE__*/React.createElement("th", null, "Charge"),
+              /*#__PURE__*/React.createElement("th", { className: "num" }, "Quoted"),
+              /*#__PURE__*/React.createElement("th", { className: "num" }, "Invoiced"),
+              /*#__PURE__*/React.createElement("th", { className: "num" }, "Gap"))),
+            /*#__PURE__*/React.createElement("tbody", null,
+              d.lines.map((l, i) => /*#__PURE__*/React.createElement("tr", { key: i },
+                /*#__PURE__*/React.createElement("td", null, l.charge),
+                /*#__PURE__*/React.createElement("td", { className: "num" }, money(l.quoted)),
+                /*#__PURE__*/React.createElement("td", { className: "num" }, money(l.invoiced)),
+                /*#__PURE__*/React.createElement("td", { className: "num", style: { color: l.gap > 0 ? "#c4463a" : "#8b98a5", fontWeight: l.gap > 0 ? 600 : 400 } }, l.gap > 0 ? "+" + money(l.gap) : "—"))),
+              /*#__PURE__*/React.createElement("tr", { style: { borderTop: "2px solid #e5eaef", fontWeight: 700 } },
+                /*#__PURE__*/React.createElement("td", null, "Total"),
+                /*#__PURE__*/React.createElement("td", { className: "num" }, money(d.quoteTotal)),
+                /*#__PURE__*/React.createElement("td", { className: "num" }, money(d.invoiceTotal)),
+                /*#__PURE__*/React.createElement("td", { className: "num", style: { color: "#c4463a" } }, "+" + money(d.gap)))))),
+        /*#__PURE__*/React.createElement(Trace, { rows: 5, sql: "SELECT charge, q.amount AS quoted, i.amount AS invoiced, i.amount-q.amount AS gap\nFROM invoices i JOIN quotes q ON i.shipment_id=q.shipment_id\nWHERE i.invoice_id='" + d.invoice_id + "'" })),
+      /*#__PURE__*/React.createElement("div", { className: "follows" },
+        /*#__PURE__*/React.createElement("span", { className: "fchip", onClick: () => onFollow("__scan__" + d.shipment_id) }, "Any similar overcharges?")));
+  }
+  if (m.type === "scan") {
+    const d = m.data;
+    const chartData = d.hits.map(h => ({ label: h.shipment_id.replace("SHP-", "SHP-"), value: h.overcharge }));
+    return /*#__PURE__*/React.createElement("div", { className: "msg ai" },
+      /*#__PURE__*/React.createElement("div", { className: "bub", style: { background: "#e5f4ef", borderColor: "#0f8368" } },
+        /*#__PURE__*/React.createElement("div", { className: "atext" },
+          /*#__PURE__*/React.createElement("b", null, "This isn't a one-off. "), d.carrier, " billed phantom detention on ",
+          /*#__PURE__*/React.createElement("b", null, d.hits.length + " shipments"), " on ", d.lane, " — ",
+          /*#__PURE__*/React.createElement("b", { style: { color: "#0b6650" } }, money(d.total)), " you haven't disputed."),
+        /*#__PURE__*/React.createElement("div", { className: "chart" }, /*#__PURE__*/React.createElement(Bars, { data: chartData, fmt: money, color: "#b8791a" })),
+        /*#__PURE__*/React.createElement("div", { className: "tw" },
+          /*#__PURE__*/React.createElement("table", null,
+            /*#__PURE__*/React.createElement("thead", null, /*#__PURE__*/React.createElement("tr", null,
+              /*#__PURE__*/React.createElement("th", null, "Invoice"), /*#__PURE__*/React.createElement("th", null, "Shipment"),
+              /*#__PURE__*/React.createElement("th", { className: "num" }, "Quoted"), /*#__PURE__*/React.createElement("th", { className: "num" }, "Billed"),
+              /*#__PURE__*/React.createElement("th", { className: "num" }, "Overcharge"))),
+            /*#__PURE__*/React.createElement("tbody", null,
+              d.hits.map((h, i) => /*#__PURE__*/React.createElement("tr", { key: i },
+                /*#__PURE__*/React.createElement("td", { className: "mono" }, h.invoice_id),
+                /*#__PURE__*/React.createElement("td", { className: "mono" }, h.shipment_id),
+                /*#__PURE__*/React.createElement("td", { className: "num" }, money(h.quoted)),
+                /*#__PURE__*/React.createElement("td", { className: "num" }, money(h.billed)),
+                /*#__PURE__*/React.createElement("td", { className: "num", style: { color: "#c4463a", fontWeight: 600 } }, "+" + money(h.overcharge))))))),
+        /*#__PURE__*/React.createElement(Trace, { rows: d.hits.length, sql: "SELECT i.invoice_id, i.shipment_id, q.detention AS quoted, i.detention AS billed,\n       i.detention-q.detention AS overcharge\nFROM invoices i JOIN quotes q ON i.shipment_id=q.shipment_id\nJOIN shipments s ON i.shipment_id=s.shipment_id\nWHERE s.carrier='" + d.carrier + "' AND i.detention>q.detention\nORDER BY overcharge DESC" })));
+  }
+  if (m.type === "workflow") {
+    return /*#__PURE__*/React.createElement("div", {
+      className: "msg ai"
+    }, /*#__PURE__*/React.createElement("div", {
+      className: "bub"
+    }, /*#__PURE__*/React.createElement("div", {
+      className: "atext"
+    }, "Running ", /*#__PURE__*/React.createElement("b", null, "Invoice check"), " — a saved workflow that chains capabilities."), /*#__PURE__*/React.createElement("div", {
+      className: "wfrun"
+    }, m.steps.map((s, i) => /*#__PURE__*/React.createElement("div", {
+      key: i,
+      className: "wfstep " + s.status
+    }, /*#__PURE__*/React.createElement("span", {
+      className: "wfic"
+    }, s.status === "done" ? "✓" : s.status === "paused" ? "⏸" : "…"), /*#__PURE__*/React.createElement("div", {
+      className: "wfmid"
+    }, /*#__PURE__*/React.createElement("b", null, s.name), /*#__PURE__*/React.createElement("div", {
+      className: "wfd"
+    }, s.detail)), /*#__PURE__*/React.createElement("span", {
+      className: "wfbadge " + s.status
+    }, s.status)))), m.summary && /*#__PURE__*/React.createElement("div", {
+      className: "wfsum"
+    }, "Found ", /*#__PURE__*/React.createElement("b", null, money(m.summary.total)), " in phantom detention across ", /*#__PURE__*/React.createElement("b", null, m.summary.shipments, " shipments"), " (", m.summary.carrier, ", ", m.summary.lane, "). One step paused for human approval — that's the harness holding for a person before it disputes.")));
+  }
+  return null;
+}
+function Trace({
+  sql,
+  rows,
+  cost,
+  blocked,
+  vision
+}) {
+  const [o, setO] = useState(false);
+  return /*#__PURE__*/React.createElement("div", {
+    className: "trace"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "th",
+    onClick: () => setO(!o)
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "ca"
+  }, o ? "▾" : "▸"), /*#__PURE__*/React.createElement("b", null, "trace"), /*#__PURE__*/React.createElement("span", null, "· ", vision ? "vision" : blocked ? "blocked" : "live SQL", " · ", rows, " rows"), cost && /*#__PURE__*/React.createElement("span", {
+    className: "tc"
+  }, cost.model, " · $", cost.usd)), o && /*#__PURE__*/React.createElement("div", {
+    className: "tb"
+  }, /*#__PURE__*/React.createElement("pre", null, sql), /*#__PURE__*/React.createElement("div", {
+    className: "tm"
+  }, vision ? "Claude vision → structured fields" : "Generated by Claude, run read-only on real SQLite")));
+}
+
+// ---------- capability rail ----------
+const CONNECTORS = ["SAP ERP", "Oracle TMS", "Carrier portals", "Email inbox"];
+function Rail({
+  sessionCost,
+  onAction,
+  active
+}) {
+  return /*#__PURE__*/React.createElement("div", {
+    className: "rail"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "rgroup"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "rlabel"
+  }, "Do something"), /*#__PURE__*/React.createElement("button", {
+    className: "ract" + (active === "ask" ? " on" : ""),
+    onClick: () => onAction("ask")
+  }, /*#__PURE__*/React.createElement("b", null, "Ask the data"), /*#__PURE__*/React.createElement("i", null, "question → live SQL")), /*#__PURE__*/React.createElement("button", {
+    className: "ract" + (active === "doc" ? " on" : ""),
+    onClick: () => onAction("doc")
+  }, /*#__PURE__*/React.createElement("b", null, "Read a document"), /*#__PURE__*/React.createElement("i", null, "drop a PDF or image")), /*#__PURE__*/React.createElement("button", {
+    className: "ract" + (active === "recon" ? " on" : ""),
+    onClick: () => onAction("recon")
+  }, /*#__PURE__*/React.createElement("b", null, "Reconcile & scan"), /*#__PURE__*/React.createElement("i", null, "invoice vs quote")), /*#__PURE__*/React.createElement("button", {
+    className: "ract" + (active === "wf" ? " on" : ""),
+    onClick: () => onAction("wf")
+  }, /*#__PURE__*/React.createElement("b", null, "Run invoice check"), /*#__PURE__*/React.createElement("i", null, "saved workflow"))), /*#__PURE__*/React.createElement("div", {
+    className: "rgroup"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "rlabel"
+  }, "Cost this session"), /*#__PURE__*/React.createElement("div", {
+    className: "costbox"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "costn"
+  }, "$", sessionCost.toFixed(4)), /*#__PURE__*/React.createElement("div", {
+    className: "costl"
+  }, "across live model calls"), /*#__PURE__*/React.createElement("div", {
+    className: "costproj"
+  }, "≈ ", money(Math.round(sessionCost * 1000)), " / 1,000 questions"))), /*#__PURE__*/React.createElement("div", {
+    className: "rgroup"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "rlabel"
+  }, "Connectors ", /*#__PURE__*/React.createElement("span", {
+    className: "soon"
+  }, "coming soon")), CONNECTORS.map((c, i) => /*#__PURE__*/React.createElement("div", {
+    key: i,
+    className: "conn"
+  }, c))), /*#__PURE__*/React.createElement("div", {
+    className: "rgroup"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "rlabel"
+  }, "About"), /*#__PURE__*/React.createElement("button", {
+    className: "ract subtle",
+    onClick: () => onAction("about")
+  }, /*#__PURE__*/React.createElement("b", null, "How it works"), /*#__PURE__*/React.createElement("i", null, "ontology & architecture")), /*#__PURE__*/React.createElement("button", {
+    className: "ract subtle",
+    onClick: () => onAction("demo")
+  }, /*#__PURE__*/React.createElement("b", null, "Demo script"), /*#__PURE__*/React.createElement("i", null, "2-minute path"))));
+}
+// ---------- follow-up suggestions per answer type ----------
+function suggestFollows(question) {
+  const q = question.toLowerCase();
+  if (q.includes("carrier") && q.includes("spend")) return ["Break that down by lane", "Which carrier overcharges on detention?"];
+  if (q.includes("detention") || q.includes("overcharge")) return ["Show me the worst 3 shipments", "What's the total exposure this quarter?"];
+  if (q.includes("lane")) return ["What did we spend on the busiest lane?", "Which carriers run Shanghai to LA?"];
+  return ["Which carrier overcharges us most on detention?", "Show invoices billed more than quoted"];
+}
+function App() {
+  const [key, setKey] = useState(sessionStorage.getItem(KEY_LS) || "");
+  const [connected, setConnected] = useState(!!sessionStorage.getItem(KEY_LS));
+  const [thread, setThread] = useState([{
+    type: "welcome"
+  }]);
+  const [input, setInput] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [model, setModel] = useState("claude-sonnet-4-5");
+  const [sessionCost, setSessionCost] = useState(0);
+  const [active, setActive] = useState("ask");
+  const [panel, setPanel] = useState(null); // about/demo overlay
+  const fileRef = useRef();
+  const endRef = useRef();
+  useEffect(() => {
+    endRef.current && endRef.current.scrollIntoView({
+      behavior: "smooth"
+    });
+  }, [thread, busy]);
+  function push(m) {
+    setThread(t => [...t, {
+      id: Date.now() + Math.random(),
+      ...m
+    }]);
+  }
+  function saveKey() {
+    if (key.trim()) {
+      sessionStorage.setItem(KEY_LS, key.trim());
+      setConnected(true);
+    }
+  }
+  function addCost(usd) {
+    setSessionCost(c => c + usd);
+  }
+  async function ask(qText) {
+    const q = (qText || input).trim();
+    if (!q || busy) return;
+    if (!connected) {
+      push({
+        type: "error",
+        text: "Connect your API key first (top right)."
+      });
+      return;
+    }
+    setInput("");
+    push({
+      type: "user",
+      text: q
+    });
+    setBusy(true);
+    const thinkId = Date.now();
+    push({
+      type: "thinking",
+      text: "Writing SQL and running it…"
+    });
+    try {
+      const res = await fetch(API + "/api/ask", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json"
+        },
+        body: JSON.stringify({
+          question: q,
+          apiKey: key
+        })
+      });
+      const j = await res.json();
+      setThread(t => t.filter(m => m.type !== "thinking"));
+      if (j.error) {
+        push({
+          type: "error",
+          text: j.error
+        });
+      } else {
+        const cost = {
+          model,
+          usd: costOf(model, 600, 180).toFixed(4)
+        };
+        addCost(parseFloat(cost.usd));
+        push({
+          type: "answer",
+          result: j,
+          headline: j.answerable ? `Here's what the data shows for “${q}”.` : "",
+          cost,
+          follows: j.answerable ? suggestFollows(q) : []
+        });
+      }
+    } catch (e) {
+      setThread(t => t.filter(m => m.type !== "thinking"));
+      push({
+        type: "error",
+        text: "Couldn't reach the agent. Is the backend running? (" + e.message + ")"
+      });
+    }
+    setBusy(false);
+  }
+  function onFollow(f) {
+    if (f && f.startsWith("__store__")) {
+      const id = f.slice(9);
+      setThread(t => t.map(m => m.id == id ? {
+        ...m,
+        stored: true
+      } : m));
+      return;
+    }
+    if (f && f.startsWith("__reconcile__")) { doReconcile(f.slice(13)); return; }
+    if (f && f.startsWith("__scan__")) { doScan(f.slice(8)); return; }
+    ask(f);
+  }
+  async function doReconcile(shipmentId) {
+    push({ type: "user", text: "Was this invoice overcharged versus the quote?" });
+    setBusy(true); push({ type: "thinking", text: "Reconciling invoice against quote…" });
+    try {
+      const res = await fetch(API + "/api/reconcile", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ shipmentId }) });
+      const j = await res.json();
+      setThread(t => t.filter(m => m.type !== "thinking"));
+      if (!j.found) { push({ type: "error", text: j.message || "No invoice to reconcile." }); }
+      else push({ type: "reconcile", data: j });
+    } catch (e) { setThread(t => t.filter(m => m.type !== "thinking")); push({ type: "error", text: "Reconcile failed: " + e.message }); }
+    setBusy(false);
+  }
+  async function doScan(shipmentId) {
+    push({ type: "user", text: "Any similar overcharges across our shipments?" });
+    setBusy(true); push({ type: "thinking", text: "Scanning all shipments for the same pattern…" });
+    try {
+      const res = await fetch(API + "/api/scan", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ shipmentId }) });
+      const j = await res.json();
+      setThread(t => t.filter(m => m.type !== "thinking"));
+      if (!j.found || !j.hits.length) { push({ type: "error", text: "No similar pattern found." }); }
+      else push({ type: "scan", data: j });
+    } catch (e) { setThread(t => t.filter(m => m.type !== "thinking")); push({ type: "error", text: "Scan failed: " + e.message }); }
+    setBusy(false);
+  }
+  function onFixField(msgId, k, val) {
+    setThread(t => t.map(m => {
+      if (m.id !== msgId) return m;
+      const nf = {
+        ...m.fields,
+        charges: {
+          ...m.fields.charges,
+          [k]: Number(val) || val
+        }
+      };
+      const nc = {
+        ...m.confidence,
+        [k]: 0.99
+      };
+      return {
+        ...m,
+        fields: nf,
+        confidence: nc,
+        lowCount: 0
+      };
+    }));
+  }
+  async function handleFile(file) {
+    if (!file) return;
+    if (!connected) {
+      push({
+        type: "error",
+        text: "Connect your API key first."
+      });
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = async () => {
+      const b64 = reader.result.split(",")[1];
+      push({
+        type: "user",
+        text: "📎 " + file.name
+      });
+      setBusy(true);
+      push({
+        type: "thinking",
+        text: "Reading the document with vision…"
+      });
+      try {
+        const res = await fetch(API + "/api/extract", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json"
+          },
+          body: JSON.stringify({
+            mediaType: file.type,
+            data: b64,
+            apiKey: key
+          })
+        });
+        const j = await res.json();
+        setThread(t => t.filter(m => m.type !== "thinking"));
+        if (j.error) {
+          push({
+            type: "error",
+            text: j.error
+          });
+        } else {
+          const conf = j.confidence || {};
+          const low = Object.values(conf).filter(c => c < 0.7).length;
+          const cost = {
+            model,
+            usd: costOf(model, 1500, 300).toFixed(4)
+          };
+          addCost(parseFloat(cost.usd));
+          push({
+            type: "extraction",
+            name: file.name,
+            fields: j.fields,
+            confidence: conf,
+            count: Object.keys(j.fields.charges || {}).length,
+            lowCount: low,
+            editable: true,
+            cost
+          });
+        }
+      } catch (e) {
+        setThread(t => t.filter(m => m.type !== "thinking"));
+        push({
+          type: "error",
+          text: "Vision extraction failed: " + e.message
+        });
+      }
+      setBusy(false);
+    };
+    reader.readAsDataURL(file);
+  }
+  async function runWorkflow() {
+    push({
+      type: "user",
+      text: "Run the invoice-check workflow"
+    });
+    setBusy(true);
+    push({
+      type: "thinking",
+      text: "Running the workflow…"
+    });
+    try {
+      const res = await fetch(API + "/api/run-workflow", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json"
+        },
+        body: "{}"
+      });
+      const j = await res.json();
+      setThread(t => t.filter(m => m.type !== "thinking"));
+      push({
+        type: "workflow",
+        steps: j.steps,
+        summary: j.summary
+      });
+    } catch (e) {
+      setThread(t => t.filter(m => m.type !== "thinking"));
+      push({
+        type: "error",
+        text: "Workflow failed: " + e.message
+      });
+    }
+    setBusy(false);
+  }
+  function onAction(a) {
+    setActive(a);
+    if (a === "ask") {
+      setInput("Which carrier overcharges us the most on detention?");
+    } else if (a === "doc") {
+      fileRef.current && fileRef.current.click();
+    } else if (a === "recon") {
+      ask("Show me every invoice billed more than it was quoted, worst first");
+    } else if (a === "wf") {
+      runWorkflow();
+    } else if (a === "about") {
+      setPanel("about");
+    } else if (a === "demo") {
+      setPanel("demo");
+    }
+  }
+  return /*#__PURE__*/React.createElement("div", {
+    className: "shell"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "hdr"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "brand"
+  }, /*#__PURE__*/React.createElement("h1", null, "Freight", /*#__PURE__*/React.createElement("span", null, "Mind")), /*#__PURE__*/React.createElement("em", null, "agentic assistant for logistics")), /*#__PURE__*/React.createElement("div", {
+    className: "hdrr"
+  }, /*#__PURE__*/React.createElement("select", {
+    className: "msel",
+    value: model,
+    onChange: e => setModel(e.target.value)
+  }, /*#__PURE__*/React.createElement("option", {
+    value: "claude-sonnet-4-5"
+  }, "sonnet-4-5"), /*#__PURE__*/React.createElement("option", {
+    value: "claude-haiku"
+  }, "haiku (cheaper)")), connected ? /*#__PURE__*/React.createElement("span", {
+    className: "kok",
+    onClick: () => {
+      sessionStorage.removeItem(KEY_LS);
+      setConnected(false);
+      setKey("");
+    }
+  }, "● connected") : /*#__PURE__*/React.createElement("div", {
+    className: "kin"
+  }, /*#__PURE__*/React.createElement("input", {
+    type: "password",
+    placeholder: "sk-ant-…",
+    value: key,
+    onChange: e => setKey(e.target.value),
+    onKeyDown: e => e.key === "Enter" && saveKey()
+  }), /*#__PURE__*/React.createElement("button", {
+    onClick: saveKey
+  }, "Connect")))), /*#__PURE__*/React.createElement("div", {
+    className: "body"
+  }, /*#__PURE__*/React.createElement(Rail, {
+    sessionCost: sessionCost,
+    onAction: onAction,
+    active: active
+  }), /*#__PURE__*/React.createElement("div", {
+    className: "main"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "thread"
+  }, thread.map((m, i) => m.type === "welcome" ? /*#__PURE__*/React.createElement("div", {
+    key: "w",
+    className: "welcome"
+  }, /*#__PURE__*/React.createElement("h2", null, "Ask your freight data anything."), /*#__PURE__*/React.createElement("p", null, "Type a question and a live model writes the SQL, runs it against a real database, and shows its work. Or drop in an invoice and watch it get read. Every answer is grounded — if the data can't answer, it says so."), /*#__PURE__*/React.createElement("div", {
+    className: "wex"
+  }, ["What did we spend by carrier?", "Which carrier overcharges us most on detention?", "Show invoices billed more than quoted"].map((e, j) => /*#__PURE__*/React.createElement("span", {
+    key: j,
+    className: "fchip",
+    onClick: () => ask(e)
+  }, e))), /*#__PURE__*/React.createElement("div", {
+    className: "trybox"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "tryhead"
+  }, "No invoice handy? Try the sample:"), /*#__PURE__*/React.createElement("div", {
+    className: "tryrow"
+  }, /*#__PURE__*/React.createElement("a", {
+    className: "trybtn dl",
+    href: "/sample_invoice.pdf",
+    download: "sample_invoice.pdf"
+  }, "\u2193 Download sample PDF"), /*#__PURE__*/React.createElement("a", {
+    className: "trybtn dl2",
+    href: "/sample_invoice.png",
+    download: "sample_invoice.png"
+  }, "\u2193 PNG"), /*#__PURE__*/React.createElement("button", {
+    className: "trybtn up",
+    onClick: () => fileRef.current.click()
+  }, "\u21a5 Upload it back")), /*#__PURE__*/React.createElement("div", {
+    className: "tryhint"
+  }, "Download it, then upload it — watch the model read it, then reconcile it against the quote."), /*#__PURE__*/React.createElement("div", { className: "tryhead", style: { marginTop: "14px" } }, "Or try the smudged one — see the review flow:"), /*#__PURE__*/React.createElement("div", { className: "tryrow" }, /*#__PURE__*/React.createElement("a", { className: "trybtn dl2", href: "/smudged_invoice.png", download: "smudged_invoice.png" }, "↓ Smudged PNG"), /*#__PURE__*/React.createElement("a", { className: "trybtn dl2", href: "/smudged_invoice.pdf", download: "smudged_invoice.pdf" }, "↓ Smudged PDF")), /*#__PURE__*/React.createElement("div", { className: "tryhint" }, "The detention charge is smudged — the model flags it low-confidence and asks you to confirm before storing."))) : /*#__PURE__*/React.createElement(Card, {
+    key: m.id || i,
+    m: m,
+    onFollow: onFollow,
+    onFixField: onFixField
+  })), busy && thread[thread.length - 1] && thread[thread.length - 1].type !== "thinking" && null, /*#__PURE__*/React.createElement("div", {
+    ref: endRef
+  })), /*#__PURE__*/React.createElement("div", {
+    className: "composer"
+  }, /*#__PURE__*/React.createElement("button", {
+    className: "attach",
+    onClick: () => fileRef.current.click(),
+    title: "Upload an invoice"
+  }, "📎"), /*#__PURE__*/React.createElement("input", {
+    className: "cin",
+    placeholder: connected ? "Ask anything, or drop in an invoice…" : "Connect your key to start →",
+    value: input,
+    onChange: e => setInput(e.target.value),
+    onKeyDown: e => e.key === "Enter" && ask(),
+    disabled: !connected
+  }), /*#__PURE__*/React.createElement("button", {
+    className: "send",
+    onClick: () => ask(),
+    disabled: busy || !connected
+  }, busy ? "…" : "Ask")), /*#__PURE__*/React.createElement("input", {
+    ref: fileRef,
+    type: "file",
+    accept: "application/pdf,image/*",
+    style: {
+      display: "none"
+    },
+    onChange: e => handleFile(e.target.files[0])
+  }))), panel && /*#__PURE__*/React.createElement("div", {
+    className: "overlay",
+    onClick: () => setPanel(null)
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "ov",
+    onClick: e => e.stopPropagation()
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "ovx",
+    onClick: () => setPanel(null)
+  }, "×"), panel === "about" ? /*#__PURE__*/React.createElement(About, null) : /*#__PURE__*/React.createElement(Demo, null))));
+}
+function About() {
+  return /*#__PURE__*/React.createElement("div", {
+    className: "ovc"
+  }, /*#__PURE__*/React.createElement("h2", null, "How it works"), /*#__PURE__*/React.createElement("p", {
+    className: "ovp"
+  }, "One assistant, three tables in a real SQLite database. Analytics and document extraction are two abilities of the same harness — they share one store, so a document you upload becomes data you can query a minute later."), /*#__PURE__*/React.createElement("div", {
+    className: "ontrow"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "ont"
+  }, /*#__PURE__*/React.createElement("h4", null, "shipments"), /*#__PURE__*/React.createElement("span", null, "carrier · origin · destination · mode · status")), /*#__PURE__*/React.createElement("div", {
+    className: "ont"
+  }, /*#__PURE__*/React.createElement("h4", null, "quotes"), /*#__PURE__*/React.createElement("span", null, "what was agreed, per shipment")), /*#__PURE__*/React.createElement("div", {
+    className: "ont"
+  }, /*#__PURE__*/React.createElement("h4", null, "invoices"), /*#__PURE__*/React.createElement("span", null, "what was billed — written by extraction"))), /*#__PURE__*/React.createElement("p", {
+    className: "ovp"
+  }, /*#__PURE__*/React.createElement("b", null, "The chain:"), " ask (question → live SQL → answer) · read (document → fields → store) · link (reconcile stored invoice vs quote). Reconciliation is a JOIN on shipment_id — that join is the whole product."), /*#__PURE__*/React.createElement("p", {
+    className: "ovp"
+  }, /*#__PURE__*/React.createElement("b", null, "Trust:"), " every answer shows the SQL it ran, runs read-only, and refuses when the data can't answer. ", /*#__PURE__*/React.createElement("b", null, "Cost"), " is visible on every call because at scale it's the buying decision."), /*#__PURE__*/React.createElement("p", {
+    className: "ovp ovnote"
+  }, /*#__PURE__*/React.createElement("b", null, "Live vs roadmap:"), " live now — NL→SQL, vision extraction, reconcile, scan, the invoice-check workflow. Roadmap — connectors (shown greyed), scheduled surveillance agents, a shared skill library."));
+}
+function Demo() {
+  const s = [["Ask “what did we spend by carrier?”", "Live SQL, real chart, trace shows the query. Spend looks normal — no villain yet."], ["Ask “which carrier overcharges us most on detention?”", "The model writes a 3-table join live and finds Pacific: $3,450 across 5 shipments. I didn't pre-write that."], ["Upload the sample invoice (or your own)", "Vision reads it into fields. The detention field is low-confidence — I fix it inline, then store."], ["Ask a follow-up chip", "Follow-ups appear under each answer — I follow my train of thought, no re-typing."], ["Run the invoice-check workflow", "A saved chain runs: extract → reconcile → pause for approval → scan → flag. The harness holding for a human is the point."], ["Watch the cost meter the whole time", "Every call's cost ticks up, with a per-1,000 projection. At scale, cost is the decision."]];
+  return /*#__PURE__*/React.createElement("div", {
+    className: "ovc"
+  }, /*#__PURE__*/React.createElement("h2", null, "Demo script · 2 minutes"), s.map((x, i) => /*#__PURE__*/React.createElement("div", {
+    key: i,
+    className: "dstep"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "dn"
+  }, i + 1), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("b", null, x[0]), /*#__PURE__*/React.createElement("div", {
+    className: "dsay"
+  }, "“", x[1], "”")))), /*#__PURE__*/React.createElement("p", {
+    className: "ovp ovnote"
+  }, "Close: “Freeform question, live model, real SQL, real database, real vision on my own upload — and it catches what I didn't ask. That's a harness, not a dashboard.”"));
+}
+ReactDOM.createRoot(document.getElementById("root")).render(React.createElement(App));
+</script>
+</body>
+</html>
