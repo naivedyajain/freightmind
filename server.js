@@ -5,7 +5,7 @@ const path = require("path");
 
 const app = express();
 app.use(express.json({ limit: "25mb" }));
-app.use(express.static(path.join(__dirname, "public")));
+app.use(express.static(__dirname));
 
 const db = new Database(path.join(__dirname, "freight.db"), { readonly: true });
 
@@ -167,9 +167,9 @@ function askVision(apiKey, mediaType, base64Data) {
         { type: "text", text:
           "This is a freight invoice. Extract these fields and return ONLY a JSON object, no markdown, no explanation:\n" +
           "{ invoice_id, shipment_id, carrier, origin, destination, charges: { ocean_freight, baf, thc, documentation, detention }, total, currency }\n" +
-          "For each charge, use the numeric amount only (no currency symbol). For every charge also include a confidence 0-1 in a parallel object called confidence with the same charge keys.\n" +
-          "IMPORTANT: If a charge amount is visually smudged, blurred, obscured, or otherwise hard to read with certainty, you MUST set its confidence below 0.5 — even if you could guess it. Do NOT infer an obscured amount from the total or from the other charges; if you cannot clearly read the digits themselves, it is low confidence. Read only what is actually legible.\n" +
-          "Return exactly: { fields: {...}, confidence: {...} }" }
+          "For each charge, use the numeric amount only (no currency symbol). Also return a FLAT object called confidence whose keys are exactly ocean_freight, baf, thc, documentation, detention and whose values are 0-1 numbers. Do NOT nest confidence under 'charges'.\n" +
+          "CRITICAL RULES for unreadable amounts: If a charge amount is smudged, blurred, obscured, stained, or you cannot clearly read the actual digits, you MUST (a) set that charge's value to null, and (b) set its confidence to 0.3 or lower. NEVER output 0 or a guessed number for an amount you cannot actually read — 0 is a real value and must only be used when the invoice clearly shows zero. Do NOT infer an obscured amount from the total or from the other charges.\n" +
+          "Return exactly: { fields: { ...all fields..., charges: {...} }, confidence: { ocean_freight:.., baf:.., thc:.., documentation:.., detention:.. } }" }
       ]
     }]
   });
@@ -201,7 +201,20 @@ app.post("/api/extract", async (req, res) => {
   if (!data || !mediaType) return res.status(400).json({ error: "No file provided." });
   try {
     const out = await askVision(apiKey, mediaType, data);
-    res.json({ ok: true, ...out });
+    // Normalize: guarantee a FLAT confidence object keyed by charge name, no matter how the model nested it.
+    const CHARGES = ["ocean_freight", "baf", "thc", "documentation", "detention"];
+    const charges = (out.fields && out.fields.charges) || {};
+    let conf = out.confidence || {};
+    if (conf.charges && typeof conf.charges === "object") conf = conf.charges; // un-nest if the model nested it
+    const flatConf = {};
+    for (const k of CHARGES) {
+      let c = conf[k];
+      const v = charges[k];
+      // If value is missing/null (model couldn't read it), force low confidence regardless of what it claimed.
+      if (v === null || v === undefined || v === "") { c = Math.min(c != null ? c : 0.3, 0.3); }
+      flatConf[k] = (typeof c === "number") ? c : 0.95;
+    }
+    res.json({ ok: true, fields: out.fields, confidence: flatConf });
   } catch (e) {
     res.status(502).json({ error: "Vision extraction failed: " + e.message });
   }
