@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: freightmind
+    runtime: node
+    buildCommand: npm install && npm run build:db
+    startCommand: npm start
+    envVars:
+      - key: NODE_VERSION
+        value: 20
