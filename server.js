@@ -23,15 +23,29 @@ Notes:
 - Carriers include 'Pacific Ocean Lines', 'Meridian Shipping', 'BlueWave Carriers', 'TransGlobal Freight', 'Cathay Container Co'.
 - Lanes are origin -> destination, e.g. 'Shanghai' -> 'Los Angeles'.`;
 
-// --- guardrail: only allow a single read-only SELECT ---
+// --- guardrail: only allow a single read-only query (SELECT, or WITH ... SELECT) ---
+// The database is also opened read-only, so a write could never succeed anyway; this check is the first line.
 function isSafeSelect(sql) {
-  const s = sql.trim().replace(/;+\s*$/, "");
+  const s = sql.replace(/--[^\n]*/g, " ").replace(/\/\*[\s\S]*?\*\//g, " ").trim().replace(/;+\s*$/, "");
   if (/;/.test(s)) return false; // no multiple statements
-  if (!/^select\b/i.test(s)) return false; // must start with SELECT
-  if (/\b(insert|update|delete|drop|alter|create|attach|pragma|replace)\b/i.test(s)) return false;
+  if (!/^(select|with)\b/i.test(s)) return false;
+  if (/\b(insert|update|delete|drop|alter|create|attach|detach|pragma|vacuum|reindex)\b/i.test(s)) return false;
+  if (/\breplace\s+into\b/i.test(s)) return false; // REPLACE() the string function is fine; REPLACE INTO is not
   return true;
 }
 
+// --- pull the SQL out of whatever the model returned (fences, a sentence before it, a trailing note) ---
+function extractSql(text) {
+  let t = (text || "").trim();
+  if (/^no_answer\b/i.test(t) || /^NO_ANSWER$/m.test(t)) return "NO_ANSWER";
+  const fence = t.match(/```(?:sql|sqlite)?\s*([\s\S]*?)```/i);
+  if (fence) t = fence[1].trim();
+  const start = t.search(/\b(with|select)\b/i);
+  if (start > 0) t = t.slice(start);
+  const semi = t.indexOf(";");
+  if (semi !== -1 && t.slice(semi + 1).trim()) t = t.slice(0, semi); // drop any prose after the first statement
+  return t.trim().replace(/;+\s*$/, "");
+}
 
 // --- one shared Claude caller: model from env, automatic fallback if a model id is retired ---
 const MODELS = [process.env.CLAUDE_MODEL, "claude-sonnet-5-5", "claude-sonnet-4-5", "claude-haiku-5-5"].filter(Boolean);
@@ -113,18 +127,20 @@ app.post("/api/ask", async (req, res) => {
     return res.status(502).json({ error: "Model call failed: " + e.message });
   }
 
-  // clean stray fences if the model added them
-  sql = sql.replace(/^```sql\s*/i, "").replace(/^```\s*/, "").replace(/```\s*$/, "").trim();
+  const rawModelText = sql;
+  sql = extractSql(sql);
 
   if (sql === "NO_ANSWER" || /^no_answer$/i.test(sql)) {
     return res.json({ answerable: false, sql: null, message: "I can't answer that from the connected data." });
   }
   if (!isSafeSelect(sql)) {
+    console.warn("blocked model output:", rawModelText.slice(0, 300));
     return res.json({ answerable: false, sql, message: "Generated query was not a safe read-only SELECT, so it was blocked." });
   }
 
   try {
     const stmt = db.prepare(sql);
+    if (!stmt.reader) return res.json({ answerable: false, sql, message: "Generated query does not read data, so it was blocked." });
     const rows = stmt.all();
     const cols = rows.length ? Object.keys(rows[0]) : (stmt.columns ? stmt.columns().map((c) => c.name) : []);
     res.json({ answerable: true, sql, cols, rows, rowCount: rows.length, model: lastModel });
