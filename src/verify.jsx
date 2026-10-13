@@ -81,6 +81,19 @@ function doPost(e) {
   } catch (err) { return out({ ok: false, error: String(err) }); }
 }
 function out(o) { return ContentService.createTextOutput(JSON.stringify(o)).setMimeType(ContentService.MimeType.JSON); }`;
+function ModelKey() {
+  const [k, setK] = useState(""), [r, setR] = useState(null), [st, setSt] = useState(null), [busy, setBusy] = useState(false);
+  useEffect(() => { get("/model").then(setSt); }, []);
+  const save = () => { setBusy(true); post("/model", { key: k }).then((x) => { setBusy(false); setR(x); get("/model").then(setSt); }); };
+  return (
+    <details className="relay" open={st && !st.app_key}>
+      <summary>AI model key {st && st.app_key ? <span className="tag ok">set in app</span> : <span className="tag warn">uses server key</span>}</summary>
+      <p className="sub">Used to read documents. Kept in server memory only and tested before it's accepted. Overrides the server's key.</p>
+      <label>Anthropic API key<input type="password" value={k} onChange={(e) => setK(e.target.value)} placeholder="sk-ant-…" /></label>
+      <div className="row2"><button className="btn primary" disabled={!k || busy} onClick={save}>{busy ? "Testing…" : "Save and test"}</button></div>
+      {r && (r.ok ? <div className="rhint">Key works. Use Retry on any set that stopped.</div> : <div className="err"><b>Key rejected:</b> {r.error}</div>)}
+    </details>);
+}
 function Relay({ mail }) {
   const [url, setUrl] = useState("");
   const [secret, setSecret] = useState("");
@@ -119,6 +132,7 @@ function MailConnect({ mail, onClose }) {
           <b>Suppliers send documents to</b> {r.addresses.cg}: the CG agent checks them and leaves a draft reply in the thread.<br />
           <b>Suppliers pre-check at</b> {r.addresses.precheck}: the supplier's agent replies with what to fix. Nothing goes to CG.</div>
         : <div className="err"><b>Gmail said:</b> {r.error}{r.hint && <><br /><b>Fix:</b> {r.hint}</>}</div>)}
+      <ModelKey />
       {mail && mail.configured && <Relay mail={mail} />}
       {mail && mail.lastError && !r && <div className="err"><b>Last error:</b> {mail.lastError}{mail.hint && <><br /><b>Fix:</b> {mail.hint}</>}</div>}
       <div className="row2"><button className="btn ghost" onClick={onClose}>Close</button>{mail && mail.configured && <button className="btn ghost" onClick={() => post("/mail/disconnect").then(onClose)}>Disconnect</button>}
@@ -214,7 +228,8 @@ function Incoming({ d }) {
   const read = d.docs.filter((x) => x.status !== "reading").length;
   return (
     <div className="incoming">
-      <h3>{d.packet.status === "error" ? "The agent stopped: " + d.packet.error : "New email from SU · the agent is reading it"}</h3>
+      <h3>{d.packet.status === "error" ? "The agent stopped" : "New email from SU · the agent is reading it"}</h3>
+      {d.packet.status === "error" && <div className="err">{d.packet.error}<div className="row2" style={{ marginTop: 8 }}><button className="btn primary" onClick={() => post("/packet/" + d.packet.id + "/retry")}>Retry</button><span className="sub">Fix the key in ⚙ (top right) first.</span></div></div>}
       <div className="bar"><div style={{ width: (d.docs.length ? (read / d.docs.length) * 100 : 5) + "%" }} /></div>
       <p className="sub">{read}/{d.docs.length || "?"} documents read. Text documents are read directly; scans go to vision. Nothing is approved until every document is read.</p>
       <ol className="steps">{steps.map((s, i) => <li key={i}><b>{s.step}</b>{s.detail ? <span> · {s.detail}</span> : null}</li>)}</ol>

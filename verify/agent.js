@@ -45,6 +45,33 @@ async function process_(id, rawFiles) {
     done++; step(id, "Read " + f.filename, done + "/" + docs.length);
   };
   for (let i = 0; i < docs.length; i += 3) await Promise.all(docs.slice(i, i + 3).map(run));
+  if (systemFailure(id)) return;
+  finish(id);
+}
+// A failure on OUR side (no/invalid model key, quota, model down) is not a document problem:
+// stop, tell CG in the app, email nobody, and allow a retry once fixed.
+const SYS_ERR = /x-api-key|api key|authentication|unauthori[sz]ed|credit balance|quota|rate limit|overloaded|No API key|No model|timed out|ECONN|ENOTFOUND|5\d\d/i;
+function systemFailure(id) {
+  const errs = db.prepare("SELECT error FROM documents WHERE packet_id=? AND status='error'").all(id).map((r) => r.error || "");
+  const sys = errs.filter((e) => SYS_ERR.test(e));
+  if (!sys.length) return false;
+  db.prepare("UPDATE packets SET status='error', error=? WHERE id=?").run("The agent could not read the documents: " + sys[0] + ". Nothing was sent to anyone. Fix the model key, then Retry.", id);
+  step(id, "Stopped: model unavailable", sys[0] + " · no email sent");
+  return true;
+}
+// re-read only the documents that failed (bytes are stored), then verify again
+async function retry(id) {
+  const failed = db.prepare("SELECT id, filename, bytes FROM documents WHERE packet_id=? AND status='error' AND bytes IS NOT NULL").all(id);
+  db.prepare("UPDATE packets SET status='reading', error=NULL WHERE id=?").run(id);
+  step(id, "Retrying", failed.length + " document(s)");
+  for (const d of failed) {
+    try {
+      const x = await extract({ filename: d.filename, bytes: d.bytes }, callLLM);
+      db.prepare("UPDATE documents SET sha=?, doc_type=?, extractor=?, fields_json=?, confidence_json=?, unreadable_json=?, status='read', error=NULL WHERE id=?")
+        .run(x.sha, x.doc_type, x.extractor + (x.cached ? " (cached)" : ""), JSON.stringify(x.fields), JSON.stringify(x.confidence), JSON.stringify(x.unreadable), d.id);
+    } catch (e) { db.prepare("UPDATE documents SET status='error', error=? WHERE id=?").run(e.message, d.id); }
+  }
+  if (systemFailure(id)) return;
   finish(id);
 }
 
@@ -286,4 +313,4 @@ function seedHistory() {
 }
 seedHistory();
 
-module.exports = { setLLM, setOnReady, precheckReply, notePlaced, markRepliedFromMail, step, createPacket, getPacket, listPackets, decide, saveDraft, markSent, reverify, loadDocs, tally };
+module.exports = { retry, setLLM, setOnReady, precheckReply, notePlaced, markRepliedFromMail, step, createPacket, getPacket, listPackets, decide, saveDraft, markSent, reverify, loadDocs, tally };
