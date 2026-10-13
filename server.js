@@ -32,45 +32,53 @@ function isSafeSelect(sql) {
   return true;
 }
 
-// --- call Claude to turn a question into SQL ---
-function askClaude(apiKey, question) {
-  const body = JSON.stringify({
-    model: "claude-sonnet-4-5",
-    max_tokens: 400,
-    system:
-      "You are a SQL analyst for a freight logistics database. Given a question, return ONLY a single valid SQLite SELECT query that answers it. No explanation, no markdown, no code fences, no clarifying questions — just the SQL. If a question is vague (e.g. 'was this overcharged?') infer the most reasonable interpretation over the whole table rather than asking for specifics — for overcharge questions, compare invoices to quotes on shipment_id and surface the gaps. Never respond with prose. Use only the tables and columns given. If the question is truly unrelated to this freight data, return exactly: NO_ANSWER\n\n" +
-      SCHEMA,
-    messages: [{ role: "user", content: question }],
-  });
+
+// --- one shared Claude caller: model from env, automatic fallback if a model id is retired ---
+const MODELS = [process.env.CLAUDE_MODEL, "claude-sonnet-5-5", "claude-sonnet-4-5", "claude-haiku-5-5"].filter(Boolean);
+let workingModel = null; // remembered after the first success
+function postMessages(apiKey, payload) {
+  const body = JSON.stringify(payload);
   const options = {
-    hostname: "api.anthropic.com",
-    path: "/v1/messages",
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01",
-      "content-length": Buffer.byteLength(body),
-    },
+    hostname: "api.anthropic.com", path: "/v1/messages", method: "POST", timeout: 45000,
+    headers: { "content-type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01", "content-length": Buffer.byteLength(body) },
   };
   return new Promise((resolve, reject) => {
-    const req = https.request(options, (res) => {
-      let data = "";
-      res.on("data", (c) => (data += c));
+    const r = https.request(options, (res) => {
+      let data = ""; res.on("data", (c) => (data += c));
       res.on("end", () => {
-        try {
-          const j = JSON.parse(data);
-          if (j.error) return reject(new Error(j.error.message || "API error"));
-          const text = (j.content && j.content[0] && j.content[0].text || "").trim();
-          resolve(text);
-        } catch (e) {
-          reject(new Error("Bad API response"));
-        }
+        let j; try { j = JSON.parse(data); } catch (e) { return reject(new Error("Bad API response (HTTP " + res.statusCode + ")")); }
+        if (j.error) { const err = new Error(j.error.message || "API error"); err.type = j.error.type; err.status = res.statusCode; return reject(err); }
+        resolve(((j.content && j.content[0] && j.content[0].text) || "").trim());
       });
     });
-    req.on("error", reject);
-    req.write(body);
-    req.end();
+    r.on("timeout", () => r.destroy(new Error("Model call timed out")));
+    r.on("error", reject); r.write(body); r.end();
+  });
+}
+async function callClaude(apiKey, payload) {
+  const order = workingModel ? [workingModel, ...MODELS.filter((m) => m !== workingModel)] : MODELS;
+  let lastErr;
+  for (const model of order) {
+    try { const out = await postMessages(apiKey, { ...payload, model }); workingModel = model; return out; }
+    catch (e) {
+      lastErr = e;
+      const modelProblem = e.type === "not_found_error" || /model/i.test(e.message || "");
+      if (!modelProblem) throw e; // auth, credit, rate-limit: don't hide it behind retries
+    }
+  }
+  throw lastErr;
+}
+
+const SYSTEM_SQL =
+      "You are a SQL analyst for a freight logistics database. Given a question, return ONLY a single valid SQLite SELECT query that answers it. No explanation, no markdown, no code fences, no clarifying questions — just the SQL. If a question is vague (e.g. 'was this overcharged?') infer the most reasonable interpretation over the whole table rather than asking for specifics — for overcharge questions, compare invoices to quotes on shipment_id and surface the gaps. Never respond with prose. Use only the tables and columns given. If the question is truly unrelated to this freight data, return exactly: NO_ANSWER\n\n" +
+      SCHEMA;
+
+// --- call Claude to turn a question into SQL ---
+function askClaude(apiKey, question) {
+  return callClaude(apiKey, {
+    max_tokens: 400,
+    system: SYSTEM_SQL,
+    messages: [{ role: "user", content: question }],
   });
 }
 
@@ -148,6 +156,14 @@ app.post("/api/scan", (req, res) => {
   } catch (e) { res.status(500).json({ found: false, message: e.message }); }
 });
 
+// self-test: proves key + model work before a live demo. Open /api/selftest in the browser.
+app.get("/api/selftest", async (req, res) => {
+  const apiKey = process.env.ANTHROPIC_API_KEY || req.query.key;
+  if (!apiKey) return res.json({ ok: false, problem: "ANTHROPIC_API_KEY is not set on the server" });
+  try { const t = await callClaude(apiKey, { max_tokens: 10, messages: [{ role: "user", content: "Reply OK" }] }); res.json({ ok: true, model: workingModel, reply: t }); }
+  catch (e) { res.json({ ok: false, problem: e.message, tried: MODELS }); }
+});
+
 // health check
 app.get("/api/health", (req, res) => res.json({ ok: true, rows: db.prepare("SELECT COUNT(*) c FROM shipments").get().c }));
 
@@ -157,9 +173,8 @@ function askVision(apiKey, mediaType, base64Data) {
   const sourceBlock = isPdf
     ? { type: "document", source: { type: "base64", media_type: "application/pdf", data: base64Data } }
     : { type: "image", source: { type: "base64", media_type: mediaType, data: base64Data } };
-  const body = JSON.stringify({
-    model: "claude-sonnet-4-5",
-    max_tokens: 700,
+  return callClaude(apiKey, {
+    max_tokens: 900,
     messages: [{
       role: "user",
       content: [
@@ -172,25 +187,11 @@ function askVision(apiKey, mediaType, base64Data) {
           "Return exactly: { fields: { ...all fields..., charges: {...} }, confidence: { ocean_freight:.., baf:.., thc:.., documentation:.., detention:.. } }" }
       ]
     }]
-  });
-  const options = {
-    hostname: "api.anthropic.com", path: "/v1/messages", method: "POST",
-    headers: { "content-type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01", "content-length": Buffer.byteLength(body) }
-  };
-  return new Promise((resolve, reject) => {
-    const r = https.request(options, (res) => {
-      let data = ""; res.on("data", c => data += c);
-      res.on("end", () => {
-        try {
-          const j = JSON.parse(data);
-          if (j.error) return reject(new Error(j.error.message || "API error"));
-          let text = (j.content && j.content[0] && j.content[0].text || "").trim();
-          text = text.replace(/^```json\s*/i, "").replace(/^```\s*/, "").replace(/```\s*$/, "").trim();
-          resolve(JSON.parse(text));
-        } catch (e) { reject(new Error("Could not parse extraction: " + e.message)); }
-      });
-    });
-    r.on("error", reject); r.write(body); r.end();
+  }).then((text) => {
+    text = text.replace(/^```json\s*/i, "").replace(/^```\s*/, "").replace(/```\s*$/, "").trim();
+    const m = text.match(/\{[\s\S]*\}/); // tolerate stray prose around the JSON
+    try { return JSON.parse(m ? m[0] : text); }
+    catch (e) { throw new Error("Could not parse extraction: " + e.message); }
   });
 }
 
