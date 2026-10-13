@@ -568,7 +568,10 @@ function Rail({
   }, /*#__PURE__*/React.createElement("b", null, "Reconcile & scan"), /*#__PURE__*/React.createElement("i", null, "invoice vs quote")), /*#__PURE__*/React.createElement("button", {
     className: "ract" + (active === "wf" ? " on" : ""),
     onClick: () => onAction("wf")
-  }, /*#__PURE__*/React.createElement("b", null, "Run invoice check"), /*#__PURE__*/React.createElement("i", null, "saved workflow"))), /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("b", null, "Run invoice check"), /*#__PURE__*/React.createElement("i", null, "saved workflow")), /*#__PURE__*/React.createElement("button", {
+    className: "ract",
+    onClick: () => { window.location.href = "/verify.html"; }
+  }, /*#__PURE__*/React.createElement("b", null, "Verify trade documents"), /*#__PURE__*/React.createElement("i", null, "CG inbox · Part 2"))), /*#__PURE__*/React.createElement("div", {
     className: "rgroup"
   }, /*#__PURE__*/React.createElement("div", {
     className: "rlabel"

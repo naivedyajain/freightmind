@@ -1,17 +1,27 @@
 {
   "name": "freightmind",
   "version": "1.0.0",
-  "description": "Agentic AI assistant for logistics — live NL to SQL over real SQLite",
+  "description": "Agentic AI assistant for logistics \u2014 live NL to SQL over real SQLite",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "build:db": "node build_db.js"
+    "build:db": "node build_db.js",
+    "build:ui": "esbuild src/verify.jsx --outfile=verify.bundle.js --jsx-factory=React.createElement --jsx-fragment=React.Fragment --target=es2019 --minify"
   },
   "engines": {
     "node": "20.x"
   },
   "dependencies": {
+    "adm-zip": "^0.6.1",
+    "better-sqlite3": "^11.8.1",
     "express": "^4.18.2",
-    "better-sqlite3": "^11.8.1"
+    "imapflow": "^2.4.0",
+    "mailparser": "^3.9.38",
+    "nodemailer": "^10.1.0",
+    "pdf-parse": "^1.1.1",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2"
   }
 }

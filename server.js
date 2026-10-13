@@ -4,7 +4,7 @@ const https = require("https");
 const path = require("path");
 
 const app = express();
-app.use(express.json({ limit: "25mb" }));
+app.use(express.json({ limit: "60mb" }));
 app.use(express.static(__dirname));
 
 const db = new Database(path.join(__dirname, "freight.db"), { readonly: true });
@@ -21,7 +21,20 @@ Notes:
 - An overcharge is when an invoice charge exceeds the quote for the same shipment. Detention is frequently billed on invoices though quoted at 0.
 - A total charge = ocean_freight + baf + thc + documentation + detention.
 - Carriers include 'Pacific Ocean Lines', 'Meridian Shipping', 'BlueWave Carriers', 'TransGlobal Freight', 'Cathay Container Co'.
-- Lanes are origin -> destination, e.g. 'Shanghai' -> 'Los Angeles'.`;
+- Lanes are origin -> destination, e.g. 'Shanghai' -> 'Los Angeles'.
+
+Document verification tables (trade documents checked by the CG agent):
+packets(id, channel TEXT 'email'|'upload'|'a2a'|'precheck', from_addr, subject, received_at TEXT ISO, status TEXT 'ready'|'replied'|..., shipment_ref, customer, replied_at TEXT ISO, outcome TEXT 'approval'|'amendment', synthetic INT)
+documents(id, packet_id, filename, doc_type TEXT e.g. 'commercial_invoice','packing_list','bill_of_lading','certificate_of_origin','certificate_of_analysis', extractor, status)
+checks(id, packet_id, rule_id, rule_name, subject, status TEXT 'match'|'mismatch'|'uncertain'|'skipped', severity TEXT 'critical'|'normal', level INT, expected, found, confidence REAL, customer, shipment_ref)
+decisions(packet_id, check_id, rule_id, agent_status, cg_status, note, synthetic INT)
+facts(subject, predicate TEXT e.g. 'classified_as','same_family_as','consignee_address', object, status TEXT 'proposed'|'confirmed'|'rejected', confidence, source)
+rules(id, name, severity, scope_level, scope_key)
+Notes for these tables:
+- Exclude demo rows: packets.synthetic=0 and decisions.synthetic=0 unless asked about history.
+- NEVER select documents.bytes or packets.body.
+- "Errors" or "issues" = checks with status 'mismatch' (and 'uncertain' if asked about anything needing review).
+- First-pass yield = share of packets whose checks have no mismatch.`;
 
 // --- guardrail: only allow a single read-only query (SELECT, or WITH ... SELECT) ---
 // The database is also opened read-only, so a write could never succeed anyway; this check is the first line.
@@ -366,6 +379,9 @@ app.post("/api/run-workflow", (req, res) => {
     summary: { carrier: heroInv.carrier, lane: heroInv.origin + " → " + heroInv.destination, shipments: scan.n, total: scan.total }
   });
 });
+
+// --- document verification (Part 2): CG agent, knowledge store, IMAP/SMTP ---
+require("./verify/index.js")(app, { callWithKeys });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log("FreightMind server on http://localhost:" + PORT));

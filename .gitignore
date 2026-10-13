@@ -1,3 +1,5 @@
 node_modules/
 freight.db
 package-lock.json
+freight.db-wal
+freight.db-shm
