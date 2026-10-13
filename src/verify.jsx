@@ -34,38 +34,62 @@ function App() {
   useEffect(() => { refresh(); const t = setInterval(refresh, 3000); return () => clearInterval(t); }, [level]);
   useEffect(() => { const m = (window.location.hash || "").match(/p=(\d+)/); if (m) setSel(Number(m[1])); }, []);
   useEffect(() => { if (!sel && state.packets.length) setSel(state.packets[0].id); }, [state.packets.length]);
+  const VIEWS = [["cg", "CG · Validator", "inbox", "Verify incoming document sets"], ["su", "SU · Supplier", "send", "Pre-check before sending"], ["customer", "Customer", "ship", "Shipment readiness and outcomes"], ["knowledge", "Knowledge store", "book", "Rules, facts and aliases"], ["autonomy", "Autonomy", "gauge", "Measure, then automate"]];
+  const cur = VIEWS.find((v) => v[0] === view) || VIEWS[0];
+  const twoModes = view !== "knowledge" && view !== "autonomy";
   return (
-    <div className="app">
-      <header className="top">
-        <div className="brand"><b>FreightMind</b><span>Document verification</span></div>
-        <nav className="views">
-          {[["cg", "CG · Validator"], ["su", "SU · Supplier"], ["customer", "Customer"], ["knowledge", "Knowledge store"], ["autonomy", "Autonomy"]].map(([k, l]) => (
-            <button key={k} className={view === k ? "on" : ""} onClick={() => setView(k)}>{l}</button>))}
-          {view !== "knowledge" && view !== "autonomy" && <span className="seg">{[["work", "Work · user"], ["outcomes", "Outcomes · buyer"]].map(([k, l]) => <button key={k} className={mode === k ? "on" : ""} onClick={() => setMode(k)}>{l}</button>)}</span>}
-          <span className="demo-tag" title="In the product, each party signs in to its own organisation. This switch is for the demo.">demo switcher</span>
+    <div className="shell">
+      <aside className="side">
+        <div className="brand"><span className="logo">FM</span><div><b>FreightMind</b><span>Document agent</span></div></div>
+        <p className="sgrp">Workspaces</p>
+        <nav className="views snav">
+          {VIEWS.map(([k, l, ic]) => <button key={k} className={view === k ? "on" : ""} onClick={() => setView(k)}><Icon name={ic} />{l}</button>)}
         </nav>
-        <div className="right">
-          {state.desk && <button className="deskpill" onClick={() => setDeskOpen(true)} title={state.desk.desk + " · " + state.desk.home + ". Click to switch between a supplier's and a customer's CG team"}>{state.desk.mode === "supplier" ? "Supplier desk" : "Customer desk"} · <b>{state.desk.home}</b></button>}
-          <MailPill mail={state.mail} onPoll={() => post("/mail/poll").then((r) => { say(r.skipped ? "Mailbox not connected" : r.error ? "Mailbox error: " + r.error : r.fetched + " new email(s)"); refresh(); })} />
-          <a className="link" href="/economics.html" title="Cost, time and value per document set">Economics ↗</a>
-          <a className="link" href="/" title="Part 1: ask questions over all of this data">Ask the data ↗</a>
-        </div>
-      </header>
-      <div className="levels">
-        <span className="lv-label">Data connected</span>
-        {LEVELS.map((l) => <button key={l.n} className={"lv" + (level >= l.n ? " on" : "")} onClick={() => setLevel(l.n)} title={l.hint}>{l.label}</button>)}
-        <span className="lv-note">{LEVELS[level].hint}. Same documents; more data changes what the agent can check and how it ranks the work.</span>
+        <p className="sgrp">Insights</p>
+        <nav className="snav">
+          <a href="/economics.html" title="Cost, time and value per document set"><Icon name="chart" />Economics</a>
+          <a href="/" title="Part 1: ask questions over all of this data"><Icon name="chat" />Ask the data</a>
+        </nav>
+        <div className="side-foot"><span className="demo-tag" title="In the product, each party signs in to its own organisation. This switch is for the demo.">Demo: one login sees every party</span></div>
+      </aside>
+      <div className="app mainc">
+        <header className="top2">
+          <div className="crumb"><b>{cur[1]}</b><span>{cur[3]}</span></div>
+          {twoModes && <span className="seg">{[["work", "Work · user"], ["outcomes", "Outcomes · buyer"]].map(([k, l]) => <button key={k} className={mode === k ? "on" : ""} onClick={() => setMode(k)}>{l}</button>)}</span>}
+          <div className="right">
+            {state.desk && <button className="deskpill" onClick={() => setDeskOpen(true)} title={state.desk.desk + " · " + state.desk.home + ". Click to switch between a supplier's and a customer's CG team"}><Icon name="desk" />{state.desk.mode === "supplier" ? "Supplier desk" : "Customer desk"} · <b>{state.desk.home}</b></button>}
+            <MailPill mail={state.mail} onPoll={() => post("/mail/poll").then((r) => { say(r.skipped ? "Mailbox not connected" : r.error ? "Mailbox error: " + r.error : r.fetched + " new email(s)"); refresh(); })} />
+          </div>
+        </header>
+        {twoModes && <div className="levels">
+          <span className="lv-label">Data connected</span>
+          {LEVELS.map((l) => <button key={l.n} className={"lv" + (level >= l.n ? " on" : "")} onClick={() => setLevel(l.n)} title={l.hint}>{l.label}</button>)}
+          <span className="lv-note">{LEVELS[level].hint}. Same documents; more data changes what the agent can check and how it ranks the work.</span>
+        </div>}
+        {mode === "outcomes" && twoModes && <Outcomes party={view === "su" ? "supplier" : view} />}
+        {mode === "work" && view === "cg" && <CG state={state} level={level} sel={sel} setSel={setSel} refresh={refresh} say={say} />}
+        {mode === "work" && view === "su" && <SU level={level} say={say} prechecks={state.prechecks || []} mail={state.mail} goCG={(id) => { setView("cg"); setSel(id); refresh(); }} />}
+        {mode === "work" && view === "customer" && <Customer />}
+        {view === "knowledge" && <Knowledge say={say} />}
+        {view === "autonomy" && <Autonomy say={say} />}
       </div>
-      {mode === "outcomes" && view !== "knowledge" && view !== "autonomy" && <Outcomes party={view === "su" ? "supplier" : view} />}
-      {mode === "work" && view === "cg" && <CG state={state} level={level} sel={sel} setSel={setSel} refresh={refresh} say={say} />}
-      {mode === "work" && view === "su" && <SU level={level} say={say} prechecks={state.prechecks || []} mail={state.mail} goCG={(id) => { setView("cg"); setSel(id); refresh(); }} />}
-      {mode === "work" && view === "customer" && <Customer />}
-      {view === "knowledge" && <Knowledge say={say} />}
-      {view === "autonomy" && <Autonomy say={say} />}
       {deskOpen && state.desk && <DeskPicker desk={state.desk} onClose={() => setDeskOpen(false)} onSaved={(r) => { setDeskOpen(false); say("Desk: " + r.home + " · " + r.desk + ". Re-checked " + r.rechecked + " set(s)"); refresh(); }} />}
       {toast && <div className="toast">{toast}</div>}
     </div>);
 }
+
+// stroke icons (24px grid)
+const ICONS = {
+  inbox: "M3 13h5l2 3h4l2-3h5M5 5h14l2 8v6H3v-6z",
+  send: "M4 12l16-8-6 16-2-7z",
+  ship: "M3 17l2 3h14l2-3M5 17V9h14v8M9 9V5h6v4",
+  book: "M5 4h10a3 3 0 013 3v13H8a3 3 0 01-3-3zM5 17a3 3 0 013-3h10",
+  gauge: "M4 18a8 8 0 1116 0M12 18l4-6",
+  chart: "M4 20V10M10 20V4M16 20v-7M22 20H2",
+  chat: "M4 5h16v11H9l-5 4z",
+  desk: "M3 21V8l9-5 9 5v13M9 21v-6h6v6",
+};
+function Icon({ name }) { return <svg className="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={ICONS[name]} /></svg>; }
 
 function MailPill({ mail, onPoll }) {
   const [open, setOpen] = useState(false);
