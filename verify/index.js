@@ -130,6 +130,10 @@ module.exports = function mount(app, { callWithKeys }) {
   r.post("/mail/poll", async (req, res) => res.json(await mail.pollOnce(hooks)));
   r.post("/mail/connect", async (req, res) => res.json(await mail.connect(req.body.user, req.body.pass, hooks)));
   // model key: test with a tiny call before accepting it
+  const oc = require("./outcomes");
+  r.get("/outcomes", (req, res) => res.json(oc.outcomes(req.query.party || "customer", req.query.demo !== "0", req.query.who || null)));
+  r.get("/terms", (req, res) => res.json(oc.terms()));
+  r.post("/terms", (req, res) => res.json(oc.setTerms(req.body || {})));
   r.get("/economics", (req, res) => res.json({ ...require("./usage").summary(), reader }));
   r.post("/reader", (req, res) => { reader = req.body.reader === "haiku" ? "haiku" : "sonnet"; res.json({ reader }); });
   r.get("/model", (req, res) => res.json({ reader, app_key: !!appKey, env_key: !!process.env.ANTHROPIC_API_KEY, browser_key: !!browserKey }));

@@ -22,6 +22,7 @@ const DOC = { commercial_invoice: "Invoice", packing_list: "Packing list", bill_
 
 function App() {
   const [view, setView] = useState("cg");
+  const [mode, setMode] = useState("work"); // work = the user's surface · outcomes = the buyer's dashboard
   const [level, setLevel] = useState(0);
   const [state, setState] = useState({ packets: [], mail: {} });
   const [sel, setSel] = useState(null);
@@ -38,6 +39,7 @@ function App() {
         <nav className="views">
           {[["cg", "CG · Validator"], ["su", "SU · Supplier"], ["customer", "Customer"], ["knowledge", "Knowledge store"]].map(([k, l]) => (
             <button key={k} className={view === k ? "on" : ""} onClick={() => setView(k)}>{l}</button>))}
+          {view !== "knowledge" && <span className="seg">{[["work", "Work · user"], ["outcomes", "Outcomes · buyer"]].map(([k, l]) => <button key={k} className={mode === k ? "on" : ""} onClick={() => setMode(k)}>{l}</button>)}</span>}
           <span className="demo-tag" title="In the product, each party signs in to its own organisation. This switch is for the demo.">demo switcher</span>
         </nav>
         <div className="right">
@@ -51,9 +53,10 @@ function App() {
         {LEVELS.map((l) => <button key={l.n} className={"lv" + (level >= l.n ? " on" : "")} onClick={() => setLevel(l.n)} title={l.hint}>{l.label}</button>)}
         <span className="lv-note">{LEVELS[level].hint}. Same documents; more data changes what the agent can check and how it ranks the work.</span>
       </div>
-      {view === "cg" && <CG state={state} level={level} sel={sel} setSel={setSel} refresh={refresh} say={say} />}
-      {view === "su" && <SU level={level} say={say} prechecks={state.prechecks || []} mail={state.mail} goCG={(id) => { setView("cg"); setSel(id); refresh(); }} />}
-      {view === "customer" && <Customer />}
+      {mode === "outcomes" && view !== "knowledge" && <Outcomes party={view === "su" ? "supplier" : view} />}
+      {mode === "work" && view === "cg" && <CG state={state} level={level} sel={sel} setSel={setSel} refresh={refresh} say={say} />}
+      {mode === "work" && view === "su" && <SU level={level} say={say} prechecks={state.prechecks || []} mail={state.mail} goCG={(id) => { setView("cg"); setSel(id); refresh(); }} />}
+      {mode === "work" && view === "customer" && <Customer />}
       {view === "knowledge" && <Knowledge say={say} />}
       {toast && <div className="toast">{toast}</div>}
     </div>);
@@ -455,6 +458,103 @@ function Customer() {
       </tbody></table>
       {d && !d.shipments.length && <div className="empty">No shipments yet.</div>}
       <p className="sub">The customer sees status, not the supplier's error history: "share the rule, not the data".</p>
+    </div>);
+}
+
+// ======================= Outcomes (buyer dashboards) =======================
+const pct = (x) => (x == null ? "—" : Math.round(x * 100) + "%");
+const fmtMin = (m) => (m == null ? "—" : m >= 90 ? (m / 60).toFixed(1) + " h" : Math.round(m) + " min");
+const mon = (m) => ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"].at(Number(m.slice(5, 7)) - 1);
+function Trend({ months, get, fmt, title, good }) {
+  const W = 300, H = 110, L = 34, R = 10, T = 18, B = 22;
+  const vals = months.map(get), max = Math.max(...vals.filter((x) => x != null), 0) * 1.12 || 1;
+  const x = (i) => L + (months.length < 2 ? 0 : i * (W - L - R) / (months.length - 1)), y = (v) => T + (H - T - B) * (1 - v / max);
+  const liveI = months.findIndex((m) => m.live);
+  const pts = vals.map((v, i) => (v == null ? null : [x(i), y(v)])).filter(Boolean);
+  return (
+    <div className="trend"><div className="th2"><b>{title}</b><span className={"tag " + (good ? "ok" : "muted")}>{fmt(vals.at(-1))}</span></div>
+      <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label={title}>
+        {liveI > 0 && <g><line x1={x(liveI) - (x(1) - x(0)) / 2} x2={x(liveI) - (x(1) - x(0)) / 2} y1={T - 8} y2={H - B} stroke="var(--purp)" strokeDasharray="3 3" /><text x={x(liveI) - (x(1) - x(0)) / 2 + 4} y={T - 2} fontSize="9.5" fill="var(--purp)">agent live</text></g>}
+        <line x1={L} x2={W - R} y1={H - B} y2={H - B} stroke="var(--line)" />
+        <polyline points={pts.map((p) => p.join(",")).join(" ")} fill="none" stroke="var(--teal)" strokeWidth="2" />
+        {pts.map((p, i) => <circle key={i} cx={p[0]} cy={p[1]} r="3" fill="var(--teal)" />)}
+        {months.map((m, i) => <text key={m.month} x={x(i)} y={H - 6} fontSize="10" textAnchor="middle" fill="var(--muted)">{mon(m.month)}</text>)}
+        <text x={L - 4} y={T + 4} fontSize="9.5" textAnchor="end" fill="var(--muted)">{fmt(max / 1.12)}</text>
+      </svg></div>);
+}
+function Outcomes({ party }) {
+  const [d, setD] = useState(null), [demo, setDemo] = useState(true), [who, setWho] = useState("");
+  useEffect(() => { setWho(""); }, [party]);
+  useEffect(() => { get("/outcomes?party=" + party + "&demo=" + (demo ? 1 : 0) + (who ? "&who=" + encodeURIComponent(who) : "")).then(setD); }, [party, demo, who]);
+  if (!d) return <div className="empty big">Loading…</div>;
+  const ms = d.months, last = ms.at(-1) || {}, first = ms.find((m) => !m.live) || ms[0] || {}, T = d.terms, y = d.ytd;
+  const title = { supplier: "Supplier · export manager", cg: "CG · head of documentation", customer: "Customer · supply chain head / CFO" }[party];
+  const Tile = ({ l, v, s, hero }) => <div className={"kpi2" + (hero ? " hero" : "")}><span>{l}</span><b>{v}</b><i>{s}</i></div>;
+  return (
+    <div className="oc">
+      <div className="oc-head">
+        <div><h2>{title}</h2><p className="sub">Measured from every document set, reply and decision. Money is <span className="tag2">modelled</span>: measured events × the deal terms (CG ${T.cgRate}/h, supplier ${T.suRate}/h, ${T.dd} per container-day, {T.share}% gain share; change them on the Economics page).</p></div>
+        <div className="oc-ctl">
+          {party === "supplier" && <select value={who} onChange={(e) => setWho(e.target.value)}><option value="">All suppliers</option>{d.options.suppliers.map((s) => <option key={s}>{s}</option>)}</select>}
+          {party === "customer" && <select value={who} onChange={(e) => setWho(e.target.value)}><option value="">All buyers</option>{d.options.customers.map((s) => <option key={s}>{s}</option>)}</select>}
+          <label className="chkl"><input type="checkbox" checked={demo} onChange={(e) => setDemo(e.target.checked)} /> include demo history</label>
+        </div>
+      </div>
+      {demo && d.has_demo && <div className="demo-note">Demo history: Apr–Sep 2026, ~2,000 shipments a month, agent live from June. Generated to show the shape; untick to see only real sets processed here.</div>}
+      {!ms.length && <div className="empty big">No document sets yet. Process one, or include the demo history.</div>}
+      {ms.length > 0 && party === "customer" && <>
+        <div className="kpis2">
+          <Tile hero l="Saved since go-live (counted)" v={money(Math.round(y.counted))} s={"after GoComet's fee: " + money(Math.round(y.net))} />
+          <Tile l="Shipments held for documents" v={pct(last.held_share)} s={"was " + pct(first.held_share) + " before the agent"} />
+          <Tile l="Documents cleared before arrival" v={pct(1 - (last.held_share || 0))} s={mon(last.month || "2026-01") + ", all shipments"} />
+          <Tile l="Port delay avoided" v={money(Math.round(y.delay))} s="demurrage + detention, modelled" />
+        </div>
+        <div className="grid2">
+          <Trend months={ms} get={(m) => m.held_share} fmt={pct} title="Shipments held for documents" good />
+          <Trend months={ms} get={(m) => m.savings.counted} fmt={(v) => (v == null ? "—" : money(Math.round(v)))} title="Savings counted per month" good />
+        </div>
+        <h3>Savings statement</h3>
+        <table className="ft"><thead><tr><th>Month</th><th>Shipments</th><th>Rounds</th><th>Held</th><th>CG time</th><th>Port delay</th><th>Counted</th><th>GoComet fee ({T.share}%)</th><th>Buyer keeps</th></tr></thead><tbody>
+          {ms.map((m) => <tr key={m.month}><td>{mon(m.month)}{m.live ? "" : " (before)"}</td><td>{m.shipments.toLocaleString()}</td><td>{m.rounds}</td><td>{pct(m.held_share)}</td><td>{money(Math.round(m.savings.cg))}</td><td>{money(Math.round(m.savings.delay))}</td><td><b>{money(Math.round(m.savings.counted))}</b></td><td>{money(Math.round(m.savings.fee))}</td><td>{money(Math.round(m.savings.net))}</td></tr>)}
+          <tr className="tot"><td>Since go-live</td><td></td><td></td><td></td><td>{money(Math.round(y.cg))}</td><td>{money(Math.round(y.delay))}</td><td><b>{money(Math.round(y.counted))}</b></td><td>{money(Math.round(y.fee))}</td><td>{money(Math.round(y.net))}</td></tr>
+        </tbody></table>
+        <p className="sub">Counted per the deal: {[T.countCG && "CG time", T.countSU && "supplier time", T.countDelay && "port delay"].filter(Boolean).join(", ")}. The fee invoice is built from this table.</p>
+        {d.scorecard && <><h3>Supplier scorecard</h3><table className="ft"><thead><tr><th>Supplier</th><th>Shipments</th><th>First-pass yield</th><th>Rounds per shipment</th></tr></thead><tbody>
+          {d.scorecard.map((s) => <tr key={s.name}><td>{s.name}</td><td>{s.shipments.toLocaleString()}</td><td>{pct(s.fpy)}</td><td>{s.rounds.toFixed(2)}</td></tr>)}</tbody></table>
+          <p className="sub">Rates only. Each supplier's error details stay with the supplier: share the rule, not the data.</p></>}
+      </>}
+      {ms.length > 0 && party === "cg" && <>
+        <div className="kpis2">
+          <Tile hero l="Median email → reply" v={fmtMin(last.reply_median_min)} s={"was " + fmtMin(first.reply_median_min)} />
+          <Tile l={'Agent "match" changed by CG'} v={String(d.guardrail.overridden_matches)} s={"guardrail: must stay 0 · " + d.guardrail.decisions + " live decisions"} />
+          <Tile l="CG hours freed since go-live" v={Math.round(y.hours).toLocaleString()} s={"≈ " + (y.hours / 160 / Math.max(1, ms.filter((m) => m.live).length)).toFixed(1) + " checkers a month"} />
+          <Tile l="Sets per checker per day" v={(last.sets_per_checker_day || 0).toFixed(1)} s={T.checkers + " checkers, 21 working days"} />
+          <Tile l="Rules trusted to auto-clear" v={d.guardrail.rules_ready + " / " + d.guardrail.rules_total} s="≥99% agreement over ≥50 decisions" />
+          <Tile l="AI cost per set" v={"$" + (last.ai_per_set || 0).toFixed(3)} s="measured on live sets; demo at $0.05" />
+        </div>
+        <div className="grid2">
+          <Trend months={ms} get={(m) => m.reply_median_min} fmt={fmtMin} title="Median email → reply" good />
+          <Trend months={ms} get={(m) => m.rounds} fmt={(v) => (v == null ? "—" : v.toFixed(2))} title="Rounds per shipment" good />
+        </div>
+        <h3>What the agent catches most</h3>
+        <table className="ft"><tbody>{d.top_rules.map((r) => <tr key={r.rule_name}><td>{r.rule_name}</td><td className="n">{r.n.toLocaleString()}</td></tr>)}</tbody></table>
+      </>}
+      {ms.length > 0 && party === "supplier" && <>
+        <div className="kpis2">
+          <Tile hero l="First-pass yield" v={pct(last.fpy)} s={"was " + pct(first.fpy) + " before pre-check"} />
+          <Tile l="Rounds per shipment" v={(last.rounds || 0).toFixed(2)} s={"was " + (first.rounds || 0).toFixed(2)} />
+          <Tile l="Shipments pre-checked" v={pct(last.precheck_share)} s="sent to the pre-check address first" />
+          <Tile l="Supplier hours saved since go-live" v={Math.round(y.supplier / T.suRate).toLocaleString()} s={money(Math.round(y.supplier)) + " of fix time, modelled"} />
+        </div>
+        <div className="grid2">
+          <Trend months={ms} get={(m) => m.fpy} fmt={pct} title="First-pass yield" good />
+          <Trend months={ms} get={(m) => m.precheck_share} fmt={pct} title="Shipments pre-checked" good />
+        </div>
+        <h3>Errors to fix at the source</h3>
+        <table className="ft"><tbody>{d.top_rules.map((r) => <tr key={r.rule_name}><td>{r.rule_name}</td><td className="n">{r.n.toLocaleString()}</td></tr>)}</tbody></table>
+        {d.scorecard && <><h3>By customer</h3><table className="ft"><thead><tr><th>Customer</th><th>Shipments</th><th>First-pass yield</th><th>Rounds</th></tr></thead><tbody>
+          {d.scorecard.map((s) => <tr key={s.name}><td>{s.name}</td><td>{s.shipments.toLocaleString()}</td><td>{pct(s.fpy)}</td><td>{s.rounds.toFixed(2)}</td></tr>)}</tbody></table></>}
+      </>}
     </div>);
 }
 

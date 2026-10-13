@@ -169,6 +169,14 @@ function calc() {
     ladder.map((p) => { const f = dealSave * p / 100; return `<tr${p === v.share ? ' style="background:var(--teal-bg);font-weight:600"' : ""}><td>${p}%</td><td class="n">${$(f * yr)}</td><td class="n">${$(f / v.cntr, 2)}</td><td class="n">${$((f - ai) * yr)}</td><td class="n">${f > 0 ? num((f - ai) / f * 100, 1) + "%" : "—"}</td><td class="n">${$((dealSave - f) * yr)}</td></tr>`; }).join("");
   document.getElementById("dealnote").innerHTML = `Savings counted: ${[v.countCG && "CG time", v.countSU && "supplier time", v.countDelay && "port delay"].filter(Boolean).join(", ") || "none"} = ${$(dealSave, 2)} per set, ${$(dealSave / v.cntr, 2)} per container. GoComet carries the AI and hosting cost (${$(ai * yr)} a year). Break-even gain share: ${num(ai / dealSave * 100, 2)}%.`;
 }
+// deal terms are shared with the buyer dashboards
+const TERM_KEYS = ["cgRate", "suRate", "cgMin1", "cgMin2", "suMin", "r1", "d1", "delayDays", "cntr", "dd", "share", "countCG", "countSU", "countDelay"];
+fetch("/api/v/terms").then((r) => r.json()).then((t) => { for (const k of TERM_KEYS) if (t[k] !== undefined && document.getElementById(k)) { v[k] = t[k]; document.getElementById(k).value = t[k]; } calc(); }).catch(() => {});
+const saveBar = document.createElement("div"); saveBar.className = "measured"; saveBar.style.background = "var(--teal-bg)";
+saveBar.innerHTML = 'These inputs are the <b>deal terms</b> the buyer dashboards use to turn measured events into money. <button class="btn primary" id="saveterms">Save as deal terms</button> <span id="savedmsg" class="note"></span>';
+box.insertBefore(saveBar, box.firstChild);
+document.getElementById("saveterms").onclick = () => { const body = {}; for (const k of TERM_KEYS) body[k] = v[k];
+  fetch("/api/v/terms", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }).then((r) => r.json()).then(() => { document.getElementById("savedmsg").textContent = " Saved. Outcomes dashboards now use these rates."; }); };
 fetch("/api/v/economics").then((r) => r.json()).then((m) => {
   const el = document.getElementById("measured");
   if (!m.sets) { el.innerHTML = 'No sets checked yet in this app. Cost below comes from token assumptions; process one and come back for the <span class="tag m">measured</span> figure.'; return; }
