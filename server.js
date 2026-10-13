@@ -57,6 +57,19 @@ function postMessages(apiKey, payload) {
   });
 }
 // prefer: "fast" routes to the cheaper model first (the UI's model picker), otherwise the default order
+// clean a key: strip spaces, line breaks and quotes that sneak in when pasting (often on mobile)
+function cleanKey(k) { return (k || "").toString().replace(/[\s"']/g, ""); }
+// try the server key first, then a key pasted in the browser; only move on if the first one is rejected as invalid
+async function callWithKeys(keys, payload, prefer) {
+  const list = keys.map(cleanKey).filter((k, i, a) => k && a.indexOf(k) === i);
+  if (!list.length) throw new Error("No API key available");
+  let lastErr;
+  for (const k of list) {
+    try { return await callClaude(k, payload, prefer); }
+    catch (e) { lastErr = e; if (!(e.status === 401 || /x-api-key|authentication/i.test(e.message || ""))) throw e; }
+  }
+  throw lastErr;
+}
 async function callClaude(apiKey, payload, prefer) {
   let order = workingModel ? [workingModel, ...MODELS.filter((m) => m !== workingModel)] : MODELS;
   if (prefer === "fast") order = ["claude-haiku-5-5", ...order.filter((m) => m !== "claude-haiku-5-5")];
@@ -78,7 +91,7 @@ const SYSTEM_SQL =
 
 // --- call Claude to turn a question into SQL ---
 function askClaude(apiKey, question, prefer) {
-  return callClaude(apiKey, {
+  return callWithKeys([].concat(apiKey), {
     max_tokens: 400,
     system: SYSTEM_SQL,
     messages: [{ role: "user", content: question }],
@@ -89,8 +102,8 @@ function askClaude(apiKey, question, prefer) {
 app.post("/api/ask", async (req, res) => {
   const { question } = req.body || {};
   // Prefer a server-side env var (production); fall back to a key pasted by the user (local demo).
-  const apiKey = process.env.ANTHROPIC_API_KEY || (req.body && req.body.apiKey);
-  if (!apiKey) return res.status(400).json({ error: "No API key available. Set ANTHROPIC_API_KEY on the server, or paste a key in the agent panel." });
+  const apiKey = [process.env.ANTHROPIC_API_KEY, req.body && req.body.apiKey].filter(Boolean);
+  if (!apiKey.length) return res.status(400).json({ error: "No API key available. Set ANTHROPIC_API_KEY on the server, or paste a key in the agent panel." });
   if (!question || !question.trim()) return res.status(400).json({ error: "Empty question." });
 
   let sql;
@@ -161,10 +174,13 @@ app.post("/api/scan", (req, res) => {
 
 // self-test: proves key + model work before a live demo. Open /api/selftest in the browser.
 app.get("/api/selftest", async (req, res) => {
-  const apiKey = process.env.ANTHROPIC_API_KEY || req.query.key;
-  if (!apiKey) return res.json({ ok: false, problem: "ANTHROPIC_API_KEY is not set on the server" });
-  try { const t = await callClaude(apiKey, { max_tokens: 10, messages: [{ role: "user", content: "Reply OK" }] }); res.json({ ok: true, model: workingModel, reply: t }); }
-  catch (e) { res.json({ ok: false, problem: e.message, tried: MODELS }); }
+  const raw = process.env.ANTHROPIC_API_KEY || "";
+  const k = cleanKey(raw);
+  const info = { keySet: !!raw, keyStart: k ? k.slice(0, 10) + "…" : null, keyLength: k.length, hadSpacesOrQuotes: raw !== k,
+    looksRight: /^sk-ant-/.test(k) && k.length > 80 };
+  if (!k) return res.json({ ok: false, problem: "ANTHROPIC_API_KEY is not set on the server (check the variable name)", ...info });
+  try { const t = await callClaude(k, { max_tokens: 10, messages: [{ role: "user", content: "Reply OK" }] }); res.json({ ok: true, model: workingModel, reply: t, ...info }); }
+  catch (e) { res.json({ ok: false, problem: e.message, tried: MODELS, ...info }); }
 });
 
 // $ at risk: every invoice charge billed above its quote, across all invoices (deterministic)
@@ -192,7 +208,7 @@ function askVision(apiKey, mediaType, base64Data) {
   const sourceBlock = isPdf
     ? { type: "document", source: { type: "base64", media_type: "application/pdf", data: base64Data } }
     : { type: "image", source: { type: "base64", media_type: mediaType, data: base64Data } };
-  return callClaude(apiKey, {
+  return callWithKeys([].concat(apiKey), {
     max_tokens: 900,
     messages: [{
       role: "user",
@@ -215,9 +231,9 @@ function askVision(apiKey, mediaType, base64Data) {
 }
 
 app.post("/api/extract", async (req, res) => {
-  const apiKey = process.env.ANTHROPIC_API_KEY || (req.body && req.body.apiKey);
+  const apiKey = [process.env.ANTHROPIC_API_KEY, req.body && req.body.apiKey].filter(Boolean);
   const { mediaType, data } = req.body || {};
-  if (!apiKey) return res.status(400).json({ error: "No API key available." });
+  if (!apiKey.length) return res.status(400).json({ error: "No API key available." });
   if (!data || !mediaType) return res.status(400).json({ error: "No file provided." });
   try {
     const out = await askVision(apiKey, mediaType, data);
