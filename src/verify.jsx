@@ -4,7 +4,19 @@ const API = "/api/v";
 const KEY_LS = "fm_key";
 const getKey = () => { try { return sessionStorage.getItem(KEY_LS) || ""; } catch (_) { return ""; } };
 const hdrs = () => ({ "content-type": "application/json", ...(getKey() ? { "x-api-key": getKey() } : {}) });
-const get = (p) => fetch(API + p, { headers: hdrs() }).then((r) => r.json());
+// GET with a timeout and retries: the free server can be slow to wake or briefly busy
+const sleepMs = (ms) => new Promise((r) => setTimeout(r, ms));
+async function get(p, tries = 4) {
+  for (let i = 0; ; i++) {
+    const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), 25000);
+    try {
+      const r = await fetch(API + p, { headers: hdrs(), signal: ctl.signal });
+      clearTimeout(t);
+      if (r.status >= 500 && i < tries - 1) throw new Error("HTTP " + r.status);
+      return await r.json();
+    } catch (e) { clearTimeout(t); if (i >= tries - 1) throw e; await sleepMs(1000 * 2 ** i); }
+  }
+}
 const post = (p, b) => fetch(API + p, { method: "POST", headers: hdrs(), body: JSON.stringify(b || {}) }).then((r) => r.json());
 const money = (n) => "$" + Number(n || 0).toLocaleString();
 const cap = (s) => (s ? s[0].toUpperCase() + s.slice(1) : "");
@@ -246,7 +258,7 @@ function Packet({ id, level, refresh, say }) {
   useEffect(() => { setD(null); setFocus(null); setTab("result"); }, [id]);
   useEffect(() => { load(); const t = setInterval(() => { if (!d || !["ready", "replied", "error"].includes(d.packet.status)) load(); }, 1500); return () => clearInterval(t); }, [id, level, d && d.packet.status]);
   useEffect(() => { if (d && ["ready", "error"].includes(d.packet.status)) refresh(); }, [d && d.packet.status]);
-  if (!d) return <div className="empty big">Loading…</div>;
+  if (!d) return <div className="empty big">Loading… <span className="sub">(the demo server can take up to a minute to wake)</span></div>;
   const p = d.packet;
   const reading = !["ready", "replied", "error"].includes(p.status);
   return (
@@ -349,7 +361,7 @@ function Autonomy({ say }) {
   const [d, setD] = useState(null);
   const load = () => get("/autonomy").then(setD);
   useEffect(() => { load(); }, []);
-  if (!d) return <div className="empty big">Loading…</div>;
+  if (!d) return <div className="empty big">Loading… <span className="sub">(the demo server can take up to a minute to wake)</span></div>;
   return (
     <div className="oc">
       <div className="oc-head"><div><h2>Autonomy · measure, then automate</h2>
@@ -597,7 +609,7 @@ function Outcomes({ party }) {
   const [d, setD] = useState(null), [demo, setDemo] = useState(true), [who, setWho] = useState("");
   useEffect(() => { setWho(""); }, [party]);
   useEffect(() => { get("/outcomes?party=" + party + "&demo=" + (demo ? 1 : 0) + (who ? "&who=" + encodeURIComponent(who) : "")).then(setD); }, [party, demo, who]);
-  if (!d) return <div className="empty big">Loading…</div>;
+  if (!d) return <div className="empty big">Loading… <span className="sub">(the demo server can take up to a minute to wake)</span></div>;
   // tiles and trends use complete months; a month with only a handful of sets (e.g. today's tests alongside demo history) is left out
   const big = Math.max(...d.months.map((m) => m.shipments), 0);
   const ms = d.months.filter((m) => !(big >= 100 && m.shipments < big * 0.1)), last = ms.at(-1) || {}, first = ms.find((m) => !m.live) || ms[0] || {}, T = d.terms, y = d.ytd;
@@ -680,7 +692,7 @@ function Knowledge({ say }) {
   const [d, setD] = useState(null);
   const load = () => get("/knowledge").then(setD);
   useEffect(() => { load(); }, []);
-  if (!d) return <div className="empty big">Loading…</div>;
+  if (!d) return <div className="empty big">Loading… <span className="sub">(the demo server can take up to a minute to wake)</span></div>;
   const act = (f, status) => post("/knowledge/" + f.id, { status }).then(() => { say("Fact " + status); load(); });
   return (
     <div className="kn">

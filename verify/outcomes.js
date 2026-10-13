@@ -53,9 +53,26 @@ seedDemo();
 
 // ---------------- metrics ----------------
 const median = (a) => { if (!a.length) return null; const s = [...a].sort((x, y) => x - y); return s[Math.floor(s.length / 2)]; };
+// The demo history is ~25k sets; recomputing it on every request blocks a small server for seconds.
+// Rows and results are cached until the live data changes (new set, reply, decision or terms).
+const cache = { key: null, rows: {}, out: {} };
+function dataKey() {
+  const r = db.prepare("SELECT MAX(id) m, COUNT(replied_at) r FROM packets WHERE synthetic=0").get();
+  const c = db.prepare("SELECT MAX(id) c FROM checks").get().c, d = db.prepare("SELECT COUNT(*) n FROM decisions").get().n;
+  return [r.m, r.r, c, d, JSON.stringify(terms())].join("|");
+}
+function fresh() { const k = dataKey(); if (k !== cache.key) { cache.key = k; cache.rows = {}; cache.out = {}; } }
+let synthRows = null; // demo history never changes once seeded: read it once
 function rows(includeDemo) {
+  if (!cache.rows.live) cache.rows.live = rows_("synthetic=0");
+  if (!includeDemo) return cache.rows.live;
+  if (!synthRows) synthRows = rows_("synthetic=1");
+  if (!cache.rows.demo) cache.rows.demo = synthRows.concat(cache.rows.live);
+  return cache.rows.demo;
+}
+function rows_(where) {
   return db.prepare(`SELECT id, channel, from_addr, counterparty, received_at, replied_at, outcome, shipment_ref, customer, synthetic, demo_json, summary_json
-    FROM packets WHERE ${includeDemo ? "1=1" : "synthetic=0"} ORDER BY received_at`).all().map((p) => {
+    FROM packets WHERE ${where} ORDER BY received_at`).all().map((p) => {
     const demo = J(p.demo_json, {}), sum = J(p.summary_json, {});
     const mism = p.synthetic ? sum.mismatch || 0 : db.prepare("SELECT COUNT(*) n FROM checks WHERE packet_id=? AND status='mismatch' AND level=0").get(p.id).n;
     return { ...p, month: (p.received_at || "").slice(0, 7), supplier: demo.supplier || p.counterparty || p.from_addr, held: demo.held || 0, mism };
@@ -82,7 +99,8 @@ function byMonth(list, includeDemo, filter) {
     const delaySave = live ? Math.max(0, T.d1 / 100 - heldShare) * T.delayDays * T.cntr * T.dd * shipments : 0;
     const counted = (T.countCG ? cgSave : 0) + (T.countSU ? suSave : 0) + (T.countDelay ? delaySave : 0);
     const cgHours = live ? (T.r1 * T.cgMin1 - rounds * T.cgMin2) / 60 * shipments : 0;
-    const ai = db.prepare("SELECT SUM(usd) usd FROM usage WHERE packet_id IN (" + (sets.map((p) => p.id).join(",") || "0") + ")").get().usd;
+    const liveIds = sets.filter((p) => !p.synthetic).map((p) => p.id); // demo sets have no usage rows
+    const ai = liveIds.length ? db.prepare("SELECT SUM(usd) usd FROM usage WHERE packet_id IN (" + liveIds.join(",") + ")").get().usd : 0;
     const aiCost = (ai || 0) + sets.filter((p) => p.synthetic).length * 0.05; // demo sets at the modelled $0.05
     return { month: m, live, sets: sets.length, shipments, rounds: +rounds.toFixed(2), fpy: shipments ? firstPass / shipments : null,
       reply_median_min: median(replies), held, held_share: heldShare, prechecked, precheck_share: shipments ? prechecked / shipments : 0,
@@ -92,6 +110,7 @@ function byMonth(list, includeDemo, filter) {
   });
 }
 function topRules(filter, includeDemo) {
+  if (!filter) return db.prepare(`SELECT c.rule_name, COUNT(*) n FROM checks c JOIN packets p ON p.id=c.packet_id WHERE c.status='mismatch' ${includeDemo ? "" : "AND p.synthetic=0"} GROUP BY c.rule_name ORDER BY n DESC LIMIT 5`).all();
   const ids = rows(includeDemo).filter(filter || (() => true)).map((p) => p.id);
   if (!ids.length) return [];
   return db.prepare(`SELECT rule_name, COUNT(*) n FROM checks WHERE status='mismatch' AND packet_id IN (${ids.join(",")}) GROUP BY rule_name ORDER BY n DESC LIMIT 5`).all();
@@ -110,6 +129,12 @@ function guardrail() {
 }
 
 function outcomes(party, includeDemo = true, who = null) {
+  fresh();
+  const k = [party, includeDemo ? 1 : 0, who || ""].join("|");
+  if (!cache.out[k]) cache.out[k] = outcomes_(party, includeDemo, who);
+  return cache.out[k];
+}
+function outcomes_(party, includeDemo = true, who = null) {
   const T = terms();
   const filt = party === "supplier" && who ? (p) => p.supplier === who : party === "customer" && who ? (p) => p.customer === who : null;
   const months = byMonth(null, includeDemo, filt);
@@ -123,4 +148,6 @@ function outcomes(party, includeDemo = true, who = null) {
     desk: require("./desk").desk(),
     has_demo: all.some((p) => p.synthetic), has_live: all.some((p) => !p.synthetic) };
 }
+// warm the cache once at start-up so the first dashboard click is instant
+setTimeout(() => { try { for (const p of ["cg", "customer", "supplier"]) outcomes(p, true); } catch (_) {} }, 2000);
 module.exports = { outcomes, terms, setTerms };
