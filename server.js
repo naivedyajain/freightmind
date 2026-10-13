@@ -36,6 +36,7 @@ function isSafeSelect(sql) {
 // --- one shared Claude caller: model from env, automatic fallback if a model id is retired ---
 const MODELS = [process.env.CLAUDE_MODEL, "claude-sonnet-5-5", "claude-sonnet-4-5", "claude-haiku-5-5"].filter(Boolean);
 let workingModel = null; // remembered after the first success
+let lastModel = null;
 function postMessages(apiKey, payload) {
   const body = JSON.stringify(payload);
   const options = {
@@ -55,11 +56,13 @@ function postMessages(apiKey, payload) {
     r.on("error", reject); r.write(body); r.end();
   });
 }
-async function callClaude(apiKey, payload) {
-  const order = workingModel ? [workingModel, ...MODELS.filter((m) => m !== workingModel)] : MODELS;
+// prefer: "fast" routes to the cheaper model first (the UI's model picker), otherwise the default order
+async function callClaude(apiKey, payload, prefer) {
+  let order = workingModel ? [workingModel, ...MODELS.filter((m) => m !== workingModel)] : MODELS;
+  if (prefer === "fast") order = ["claude-haiku-5-5", ...order.filter((m) => m !== "claude-haiku-5-5")];
   let lastErr;
   for (const model of order) {
-    try { const out = await postMessages(apiKey, { ...payload, model }); workingModel = model; return out; }
+    try { const out = await postMessages(apiKey, { ...payload, model }); if (prefer !== "fast") workingModel = model; lastModel = model; return out; }
     catch (e) {
       lastErr = e;
       const modelProblem = e.type === "not_found_error" || /model/i.test(e.message || "");
@@ -74,12 +77,12 @@ const SYSTEM_SQL =
       SCHEMA;
 
 // --- call Claude to turn a question into SQL ---
-function askClaude(apiKey, question) {
+function askClaude(apiKey, question, prefer) {
   return callClaude(apiKey, {
     max_tokens: 400,
     system: SYSTEM_SQL,
     messages: [{ role: "user", content: question }],
-  });
+  }, prefer);
 }
 
 // --- the agent endpoint: question -> SQL -> execute -> grounded result ---
@@ -92,7 +95,7 @@ app.post("/api/ask", async (req, res) => {
 
   let sql;
   try {
-    sql = await askClaude(apiKey, question.trim());
+    sql = await askClaude(apiKey, question.trim(), /haiku/i.test(req.body.model || "") ? "fast" : null);
   } catch (e) {
     return res.status(502).json({ error: "Model call failed: " + e.message });
   }
@@ -111,7 +114,7 @@ app.post("/api/ask", async (req, res) => {
     const stmt = db.prepare(sql);
     const rows = stmt.all();
     const cols = rows.length ? Object.keys(rows[0]) : (stmt.columns ? stmt.columns().map((c) => c.name) : []);
-    res.json({ answerable: true, sql, cols, rows, rowCount: rows.length });
+    res.json({ answerable: true, sql, cols, rows, rowCount: rows.length, model: lastModel });
   } catch (e) {
     res.json({ answerable: false, sql, message: "The query failed to run: " + e.message });
   }
@@ -162,6 +165,22 @@ app.get("/api/selftest", async (req, res) => {
   if (!apiKey) return res.json({ ok: false, problem: "ANTHROPIC_API_KEY is not set on the server" });
   try { const t = await callClaude(apiKey, { max_tokens: 10, messages: [{ role: "user", content: "Reply OK" }] }); res.json({ ok: true, model: workingModel, reply: t }); }
   catch (e) { res.json({ ok: false, problem: e.message, tried: MODELS }); }
+});
+
+// $ at risk: every invoice charge billed above its quote, across all invoices (deterministic)
+app.get("/api/exposure", (req, res) => {
+  const r = db.prepare(
+    "SELECT COUNT(*) AS invoices, SUM(gap) AS total, SUM(det) AS detention FROM (" +
+    " SELECT MAX(i.ocean_freight-q.ocean_freight,0)+MAX(i.baf-q.baf,0)+MAX(i.thc-q.thc,0)+MAX(i.documentation-q.documentation,0)+MAX(i.detention-q.detention,0) AS gap," +
+    " MAX(i.detention-q.detention,0) AS det FROM invoices i JOIN quotes q ON i.shipment_id=q.shipment_id) WHERE gap>0"
+  ).get();
+  const top = db.prepare(
+    "SELECT s.carrier, SUM(MAX(i.detention-q.detention,0)) AS d FROM invoices i JOIN quotes q ON i.shipment_id=q.shipment_id JOIN shipments s ON s.shipment_id=i.shipment_id GROUP BY s.carrier ORDER BY d DESC LIMIT 1"
+  ).get();
+  const hero = db.prepare(
+    "SELECT i.shipment_id FROM invoices i JOIN quotes q ON i.shipment_id=q.shipment_id ORDER BY (i.detention-q.detention) DESC LIMIT 1"
+  ).get();
+  res.json({ invoices: r.invoices || 0, total: r.total || 0, detention: r.detention || 0, topCarrier: top && top.d > 0 ? top.carrier : null, heroShipment: hero && hero.shipment_id });
 });
 
 // health check

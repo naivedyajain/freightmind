@@ -45,6 +45,10 @@ body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:14p
 .ract b{display:block;font-size:12.5px;color:var(--ink);font-weight:600}
 .ract i{font-style:normal;font-size:11px;color:var(--ink3)}
 .ract.subtle b{font-weight:500}
+.riskbox{background:#3a1d17;border-radius:10px;padding:12px 13px;color:#fff;margin-bottom:0}
+.riskn{font-size:22px;font-weight:700;font-family:var(--mono);color:#ff9b85}
+.riskl{font-size:11.5px;opacity:.8;margin-top:2px}
+.mail{white-space:pre-wrap;font-family:var(--mono);font-size:12.5px;background:#f6f8fa;border:1px solid #e5eaef;border-radius:8px;padding:12px;margin-top:8px;line-height:1.5}
 .costbox{background:#0f2b24;border-radius:10px;padding:12px 13px;color:#fff}
 .costn{font-size:22px;font-weight:700;font-family:var(--mono);color:#5fe3c0}
 .costl{font-size:10.5px;color:#9dc9be;margin-top:1px}
@@ -341,6 +345,7 @@ function Card({
         className: "exfix"
       }, /*#__PURE__*/React.createElement("input", {
         className: "fixin",
+        placeholder: "enter amount",
         defaultValue: v == null ? "" : v,
         onBlur: e => onFixField(m.id, k, e.target.value)
       }), /*#__PURE__*/React.createElement("span", {
@@ -398,7 +403,8 @@ function Card({
                 /*#__PURE__*/React.createElement("td", { className: "num", style: { color: "#c4463a" } }, "+" + money(d.gap)))))),
         /*#__PURE__*/React.createElement(Trace, { rows: 5, sql: "SELECT charge, q.amount AS quoted, i.amount AS invoiced, i.amount-q.amount AS gap\nFROM invoices i JOIN quotes q ON i.shipment_id=q.shipment_id\nWHERE i.invoice_id='" + d.invoice_id + "'" })),
       /*#__PURE__*/React.createElement("div", { className: "follows" },
-        /*#__PURE__*/React.createElement("span", { className: "fchip", onClick: () => onFollow("__scan__" + d.shipment_id) }, "Any similar overcharges?")));
+        /*#__PURE__*/React.createElement("span", { className: "fchip", onClick: () => onFollow("__scan__" + d.shipment_id) }, "Any similar overcharges?"),
+        d.gap > 0 && /*#__PURE__*/React.createElement("span", { className: "fchip", onClick: () => onFollow({ dispute: { carrier: d.carrier, lane: d.lane, items: d.lines.filter(l => l.gap > 0).map(l => ({ invoice_id: d.invoice_id, shipment_id: d.shipment_id, charge: l.charge, quoted: l.quoted, billed: l.invoiced, gap: l.gap })), total: d.gap } }) }, "Draft dispute to carrier")));
   }
   if (m.type === "scan") {
     const d = m.data;
@@ -423,7 +429,22 @@ function Card({
                 /*#__PURE__*/React.createElement("td", { className: "num" }, money(h.quoted)),
                 /*#__PURE__*/React.createElement("td", { className: "num" }, money(h.billed)),
                 /*#__PURE__*/React.createElement("td", { className: "num", style: { color: "#c4463a", fontWeight: 600 } }, "+" + money(h.overcharge))))))),
-        /*#__PURE__*/React.createElement(Trace, { rows: d.hits.length, sql: "SELECT i.invoice_id, i.shipment_id, q.detention AS quoted, i.detention AS billed,\n       i.detention-q.detention AS overcharge\nFROM invoices i JOIN quotes q ON i.shipment_id=q.shipment_id\nJOIN shipments s ON i.shipment_id=s.shipment_id\nWHERE s.carrier='" + d.carrier + "' AND i.detention>q.detention\nORDER BY overcharge DESC" })));
+        /*#__PURE__*/React.createElement(Trace, { rows: d.hits.length, sql: "SELECT i.invoice_id, i.shipment_id, q.detention AS quoted, i.detention AS billed,\n       i.detention-q.detention AS overcharge\nFROM invoices i JOIN quotes q ON i.shipment_id=q.shipment_id\nJOIN shipments s ON i.shipment_id=s.shipment_id\nWHERE s.carrier='" + d.carrier + "' AND i.detention>q.detention\nORDER BY overcharge DESC" })),
+      /*#__PURE__*/React.createElement("div", { className: "follows" },
+        /*#__PURE__*/React.createElement("span", { className: "fchip", onClick: () => onFollow({ dispute: { carrier: d.carrier, lane: d.lane, items: d.hits.map(h => ({ invoice_id: h.invoice_id, shipment_id: h.shipment_id, charge: "detention", quoted: h.quoted, billed: h.billed, gap: h.overcharge })), total: d.total } }) }, "Draft dispute for all " + d.hits.length)));
+  }
+  if (m.type === "dispute") {
+    const d = m.data;
+    const text = disputeText(d);
+    return /*#__PURE__*/React.createElement("div", { className: "msg ai" },
+      /*#__PURE__*/React.createElement("div", { className: "bub" },
+        /*#__PURE__*/React.createElement("div", { className: "atext" }, "Dispute drafted for ", /*#__PURE__*/React.createElement("b", null, d.carrier), " — ",
+          /*#__PURE__*/React.createElement("b", { style: { color: "#c4463a" } }, money(d.total)), " across ", d.items.length, " line", d.items.length > 1 ? "s" : "", ". Built from the database, not written by a model — every number traces to an invoice row."),
+        /*#__PURE__*/React.createElement("div", { className: "mail" }, text),
+        /*#__PURE__*/React.createElement("div", { className: "follows", style: { marginTop: "8px" } },
+          /*#__PURE__*/React.createElement("span", { className: "fchip", onClick: (e) => { try { navigator.clipboard.writeText(text); e.target.textContent = "Copied ✓"; } catch (_) {} } }, "Copy email"),
+          /*#__PURE__*/React.createElement("span", { className: "fchip", style: { color: "#8b98a5", cursor: "default" } }, "Send to carrier portal · coming soon")),
+        /*#__PURE__*/React.createElement(Trace, { rows: d.items.length, sql: "-- same rows as the reconcile / scan above\n-- no model call: deterministic template over invoice vs quote" })));
   }
   if (m.type === "workflow") {
     return /*#__PURE__*/React.createElement("div", {
@@ -450,6 +471,13 @@ function Card({
     }, "Found ", /*#__PURE__*/React.createElement("b", null, money(m.summary.total)), " in phantom detention across ", /*#__PURE__*/React.createElement("b", null, m.summary.shipments, " shipments"), " (", m.summary.carrier, ", ", m.summary.lane, "). One step paused for human approval — that's the harness holding for a person before it disputes.")));
   }
   return null;
+}
+function disputeText(d) {
+  const ref = d.items.map(i => i.invoice_id).filter((v, i, a) => a.indexOf(v) === i);
+  const lines = d.items.map(i => "  " + i.invoice_id + " / " + i.shipment_id + " — " + i.charge + ": quoted " + money(i.quoted) + ", billed " + money(i.billed) + "  (+" + money(i.gap) + ")").join("\n");
+  return "To: Billing, " + d.carrier + "\nSubject: Charge dispute — " + ref.length + " invoice" + (ref.length > 1 ? "s" : "") + ", " + money(d.total) + " above agreed quote\n\n" +
+    "Hello,\n\nWe have reconciled the invoices below against the agreed quotes for " + d.lane + ". The following charges exceed what was quoted:\n\n" +
+    lines + "\n\nTotal disputed: " + money(d.total) + "\n\nPlease issue a credit note or share the supporting documents (e.g. gate-in/gate-out times for detention) within 7 days. Payment on the disputed amounts is on hold until resolved.\n\nRegards,\nFreight Audit team";
 }
 function Trace({
   sql,
@@ -478,6 +506,7 @@ function Trace({
 // ---------- capability rail ----------
 const CONNECTORS = ["SAP ERP", "Oracle TMS", "Carrier portals", "Email inbox"];
 function Rail({
+  exposure,
   sessionCost,
   onAction,
   active
@@ -501,6 +530,14 @@ function Rail({
     className: "ract" + (active === "wf" ? " on" : ""),
     onClick: () => onAction("wf")
   }, /*#__PURE__*/React.createElement("b", null, "Run invoice check"), /*#__PURE__*/React.createElement("i", null, "saved workflow"))), /*#__PURE__*/React.createElement("div", {
+    className: "rgroup"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "rlabel"
+  }, "Money at risk"), /*#__PURE__*/React.createElement("div", {
+    className: "riskbox"
+  }, /*#__PURE__*/React.createElement("div", { className: "riskn" }, exposure ? money(exposure.total) : "…"),
+     /*#__PURE__*/React.createElement("div", { className: "riskl" }, exposure ? "billed above quote on " + exposure.invoices + " invoices" : "checking invoices"),
+     exposure && exposure.topCarrier && /*#__PURE__*/React.createElement("div", { className: "riskl" }, "biggest: " + exposure.topCarrier + " detention"))), /*#__PURE__*/React.createElement("div", {
     className: "rgroup"
   }, /*#__PURE__*/React.createElement("div", {
     className: "rlabel"
@@ -551,6 +588,8 @@ function App() {
   const [busy, setBusy] = useState(false);
   const [model, setModel] = useState("claude-sonnet-4-5");
   const [sessionCost, setSessionCost] = useState(0);
+  const [exposure, setExposure] = useState(null);
+  useEffect(() => { fetch(API + "/api/exposure").then(r => r.json()).then(setExposure).catch(() => {}); }, []);
   const [active, setActive] = useState("ask");
   const [panel, setPanel] = useState(null); // about/demo overlay
   const fileRef = useRef();
@@ -604,7 +643,8 @@ function App() {
         },
         body: JSON.stringify({
           question: q,
-          apiKey: key
+          apiKey: key,
+          model: model
         })
       });
       const j = await res.json();
@@ -616,7 +656,7 @@ function App() {
         });
       } else {
         const cost = {
-          model,
+          model: j.model || model,
           usd: costOf(model, 600, 180).toFixed(4)
         };
         addCost(parseFloat(cost.usd));
@@ -638,6 +678,7 @@ function App() {
     setBusy(false);
   }
   function onFollow(f) {
+    if (f && typeof f === "object" && f.dispute) { push({ type: "user", text: "Draft a dispute to the carrier" }); push({ type: "dispute", data: f.dispute }); return; }
     if (f && f.startsWith("__store__")) {
       const id = f.slice(9);
       setThread(t => t.map(m => m.id == id ? {
@@ -807,7 +848,9 @@ function App() {
     } else if (a === "doc") {
       fileRef.current && fileRef.current.click();
     } else if (a === "recon") {
-      ask("Show me every invoice billed more than it was quoted, worst first");
+      // deterministic path: reconcile the worst invoice directly, no model call
+      if (exposure && exposure.heroShipment) doReconcile(exposure.heroShipment);
+      else ask("Show me every invoice billed more than it was quoted, worst first");
     } else if (a === "wf") {
       runWorkflow();
     } else if (a === "about") {
@@ -830,7 +873,7 @@ function App() {
     onChange: e => setModel(e.target.value)
   }, /*#__PURE__*/React.createElement("option", {
     value: "claude-sonnet-4-5"
-  }, "sonnet-4-5"), /*#__PURE__*/React.createElement("option", {
+  }, "sonnet"), /*#__PURE__*/React.createElement("option", {
     value: "claude-haiku"
   }, "haiku (cheaper)")), connected ? /*#__PURE__*/React.createElement("span", {
     className: "kok",
@@ -852,6 +895,7 @@ function App() {
   }, "Connect")))), /*#__PURE__*/React.createElement("div", {
     className: "body"
   }, /*#__PURE__*/React.createElement(Rail, {
+    exposure: exposure,
     sessionCost: sessionCost,
     onAction: onAction,
     active: active
