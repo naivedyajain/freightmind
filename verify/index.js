@@ -3,7 +3,8 @@ const express = require("express");
 const { db, J } = require("./store");
 const agent = require("./agent");
 const mail = require("./mail");
-const { normParty } = require("./engine");
+const { normParty, rulesFor } = require("./engine");
+const deskMod = require("./desk");
 
 module.exports = function mount(app, { callWithKeys }) {
   // Model key: one set in the app (memory only) wins over the server env var, then any key the browser sends.
@@ -41,7 +42,19 @@ module.exports = function mount(app, { callWithKeys }) {
     const out = await mail.placeDraft({ to: d.to, subject: d.subject, text: d.body + link, inReplyTo: p.message_id, replaceId: p.draft_mail_id });
     if (out.placed) { agent.notePlaced(id, out.draft_id); agent.step(id, "Reply draft updated in the Gmail thread", "after CG's decision"); }
   }
-  r.get("/state", (req, res) => res.json({ packets: agent.listPackets(lvl(req)), prechecks: agent.listPackets(lvl(req), ["precheck"]).slice(0, 10), mail: mail.status(), level: lvl(req) }));
+  r.get("/state", (req, res) => res.json({ packets: agent.listPackets(lvl(req)), prechecks: agent.listPackets(lvl(req), ["precheck"]).slice(0, 10), mail: mail.status(), desk: deskMod.desk(), level: lvl(req) }));
+  // whose desk is this inbox: the supplier's CG team or the customer's. Changing it re-checks live sets (no model calls)
+  // and refreshes any Gmail draft still waiting, so the reply's voice and rules follow the desk.
+  r.get("/desk", (req, res) => res.json({ ...deskMod.desk(), rules: rulesFor({ home: deskMod.desk().home }) }));
+  r.post("/desk", (req, res) => {
+    const d = deskMod.setDesk(req.body || {});
+    const ids = agent.reverifyAll();
+    if (mail.configured()) for (const id of ids) {
+      const p = db.prepare("SELECT channel, via, draft_mail_id, replied_at FROM packets WHERE id=?").get(id);
+      if (p && p.channel === "email" && p.via === "email" && p.draft_mail_id && !p.replied_at) refreshGmailDraft(id).catch(() => {});
+    }
+    res.json({ ...d, rechecked: ids.length });
+  });
   r.get("/packet/:id", (req, res) => { const p = agent.getPacket(Number(req.params.id), lvl(req)); p ? res.json(p) : res.status(404).json({ error: "not found" }); });
   r.get("/doc/:id/file", (req, res) => {
     const d = db.prepare("SELECT filename, mime, bytes FROM documents WHERE id=?").get(Number(req.params.id));
@@ -101,7 +114,7 @@ module.exports = function mount(app, { callWithKeys }) {
   // knowledge store: proposed vs confirmed facts; humans confirm
   r.get("/knowledge", (req, res) => res.json({
     facts: db.prepare("SELECT * FROM facts WHERE valid_to IS NULL ORDER BY CASE status WHEN 'proposed' THEN 0 ELSE 1 END, id DESC").all(),
-    rules: db.prepare("SELECT id, name, check_type, severity, scope_level, scope_key, level, explain, version, owner, visibility FROM rules ORDER BY rowid").all(),
+    rules: db.prepare("SELECT id, name, check_type, severity, scope_level, scope_key, level, explain, version, owner, visibility, party FROM rules ORDER BY rowid").all(),
     doc_types: db.prepare("SELECT id, name, description, connected_data, required_in_packet FROM doc_types").all(),
     aliases: db.prepare("SELECT kind, COUNT(*) n FROM aliases GROUP BY kind").all() }));
   r.post("/knowledge/:id", (req, res) => {

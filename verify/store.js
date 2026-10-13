@@ -38,7 +38,8 @@ CREATE TABLE IF NOT EXISTS system_records(kind TEXT, ref TEXT, json TEXT, source
 `);
 
 // columns added after first release (safe on existing databases)
-for (const sql of ["ALTER TABLE packets ADD COLUMN draft_mail_id TEXT", "ALTER TABLE packets ADD COLUMN draft_placed_at TEXT", "ALTER TABLE packets ADD COLUMN via TEXT"]) { try { db.exec(sql); } catch (_) {} }
+for (const sql of ["ALTER TABLE packets ADD COLUMN draft_mail_id TEXT", "ALTER TABLE packets ADD COLUMN draft_placed_at TEXT", "ALTER TABLE packets ADD COLUMN via TEXT",
+  "ALTER TABLE rules ADD COLUMN party TEXT", "ALTER TABLE packets ADD COLUMN counterparty TEXT", "ALTER TABLE packets ADD COLUMN scope_json TEXT"]) { try { db.exec(sql); } catch (_) {} }
 
 // ---------------- seed configuration (only if empty) ----------------
 function seed() {
@@ -141,6 +142,17 @@ function seed() {
   F("62723266", "classified_as", "34013000", "confirmed", 0.97, "classification register");
 }
 seed();
+
+// Desk scoping (safe to re-run): a rule may belong to one party. Whether it runs depends on whose desk the inbox is
+// (verify/desk.js): the home party's own rules always, another party's rules only when that party shares them.
+function deskRules() {
+  db.prepare("UPDATE rules SET party='Unilever' WHERE id IN ('HS-KNOWN','COA-BATCH') AND party IS NULL").run();
+  db.prepare(`INSERT OR IGNORE INTO rules(id,name,check_type,params_json,severity,scope_level,scope_key,level,explain,source,owner,visibility,valid_from,party)
+    VALUES ('COO-PREF','Certificate of origin attached (needed to claim the duty preference)','doc_present',?,'critical','customer','RP Investments import requirements',0,
+    'The importer claims a preferential duty rate, which customs grants only with a certificate of origin. Without it the shipment pays full duty.',
+    'demo configuration','RP Investments trade compliance','private','2026-01-01','RP Investments International SL')`).run(JSON.stringify({ doc_type: "certificate_of_origin" }));
+}
+deskRules();
 
 const J = (s, d = null) => { try { return s ? JSON.parse(s) : d; } catch (_) { return d; } };
 module.exports = { db, J };

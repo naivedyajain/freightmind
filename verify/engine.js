@@ -55,6 +55,12 @@ function guard(rule, status, refs) {
 
 // ---------- check types ----------
 const CHECKS = {
+  // a document type the owning party requires (the type to look for is a rule parameter)
+  doc_present: (r, ctx) => {
+    const t = J(r.params_json, {}).doc_type;
+    const have = byType(ctx.docs, t);
+    return [result(r, { subject: r.name, status: have.length ? "match" : "mismatch", expected: "attached", found: have.length ? have.map((d) => d.filename).join(", ") : "missing", docs: have.map((d) => ref(d, "doc_type", t)), confidence: 1 })];
+  },
   incoterm_valid(rule, ctx) {
     const inv = byType(ctx.docs, "commercial_invoice");
     if (!inv.length) return [result(rule, { subject: "Incoterm", status: "skipped", found: "no invoice in packet", docs: [] })];
@@ -328,10 +334,28 @@ function requiredDocs(docs) {
     explanation: "CG cannot clear a shipment with a document missing from the set.", path: ["document set for this customer", t.name + " required"] }));
 }
 
+// ---------- desk scope: which rules run for whose inbox ----------
+// scope = { home, customer, counterparty }. A rule with no party runs everywhere. A party's rule runs on its own desk,
+// and on another desk only if the party shares it (visibility not private) and is the customer or counterparty on this set.
+function sameParty(a, b) { const x = normParty(a), y = normParty(b); return !!(x && y && (x.includes(y) || y.includes(x))); }
+function ruleApplies(r, scope) {
+  if (!r.party || !scope || !scope.home) return { ok: true };
+  if (sameParty(r.party, scope.home)) return { ok: true };
+  const involved = sameParty(r.party, scope.customer) || sameParty(r.party, scope.counterparty);
+  if (involved && r.visibility !== "private") return { ok: true };
+  return { ok: false, why: involved ? r.owner + " keeps this rule private" : "belongs to " + r.party + ", not part of this desk" };
+}
+function rulesFor(scope) {
+  const rules = db.prepare("SELECT id, name, party, owner, visibility FROM rules WHERE status='confirmed' ORDER BY rowid").all();
+  const applied = [], skipped = [];
+  for (const r of rules) { const a = ruleApplies(r, scope); (a.ok ? applied : skipped).push(a.ok ? r.id : { id: r.id, name: r.name, party: r.party, why: a.why }); }
+  return { applied, skipped };
+}
+
 // ---------- public: verify a packet at a data level ----------
 // level 0: documents only · 1: + booking & loading plan · 2: + ETA · 3: + cost of delay · 4: + history & autonomy
-function verify(docs, connected = {}, level = 0) {
-  const rules = db.prepare("SELECT * FROM rules WHERE status='confirmed' ORDER BY rowid").all();
+function verify(docs, connected = {}, level = 0, scope = null) {
+  const rules = db.prepare("SELECT * FROM rules WHERE status='confirmed' ORDER BY rowid").all().filter((r) => ruleApplies(r, scope).ok);
   const ctx = { docs: docs.filter((d) => d.status !== "error"), connected: level >= 1 ? connected : {}, voyage: voyage(docs) };
   const checks = [...requiredDocs(ctx.docs)];
   for (const r of rules) {
@@ -344,4 +368,4 @@ function verify(docs, connected = {}, level = 0) {
   return checks;
 }
 
-module.exports = { verify, resolvePlace, normParty, voyage, docLabel, INCOTERMS };
+module.exports = { verify, rulesFor, sameParty, resolvePlace, normParty, voyage, docLabel, INCOTERMS };

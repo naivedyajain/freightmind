@@ -7,6 +7,7 @@ const hdrs = () => ({ "content-type": "application/json", ...(getKey() ? { "x-ap
 const get = (p) => fetch(API + p, { headers: hdrs() }).then((r) => r.json());
 const post = (p, b) => fetch(API + p, { method: "POST", headers: hdrs(), body: JSON.stringify(b || {}) }).then((r) => r.json());
 const money = (n) => "$" + Number(n || 0).toLocaleString();
+const cap = (s) => (s ? s[0].toUpperCase() + s.slice(1) : "");
 const ago = (iso) => { const m = Math.round((Date.now() - new Date(iso)) / 6e4); return m < 1 ? "just now" : m < 60 ? m + " min ago" : Math.round(m / 60) + " h ago"; };
 const toB64 = (file) => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(",")[1]); r.onerror = rej; r.readAsDataURL(file); });
 
@@ -27,6 +28,7 @@ function App() {
   const [state, setState] = useState({ packets: [], mail: {} });
   const [sel, setSel] = useState(null);
   const [toast, setToast] = useState(null);
+  const [deskOpen, setDeskOpen] = useState(false);
   const say = (t) => { setToast(t); setTimeout(() => setToast(null), 3500); };
   const refresh = () => get("/state?level=" + level).then(setState).catch(() => {});
   useEffect(() => { refresh(); const t = setInterval(refresh, 3000); return () => clearInterval(t); }, [level]);
@@ -43,6 +45,7 @@ function App() {
           <span className="demo-tag" title="In the product, each party signs in to its own organisation. This switch is for the demo.">demo switcher</span>
         </nav>
         <div className="right">
+          {state.desk && <button className="deskpill" onClick={() => setDeskOpen(true)} title={state.desk.desk + " · " + state.desk.home + ". Click to switch between a supplier's and a customer's CG team"}>{state.desk.mode === "supplier" ? "Supplier desk" : "Customer desk"} · <b>{state.desk.home}</b></button>}
           <MailPill mail={state.mail} onPoll={() => post("/mail/poll").then((r) => { say(r.skipped ? "Mailbox not connected" : r.error ? "Mailbox error: " + r.error : r.fetched + " new email(s)"); refresh(); })} />
           <a className="link" href="/economics.html" title="Cost, time and value per document set">Economics ↗</a>
           <a className="link" href="/" title="Part 1: ask questions over all of this data">Ask the data ↗</a>
@@ -58,6 +61,7 @@ function App() {
       {mode === "work" && view === "su" && <SU level={level} say={say} prechecks={state.prechecks || []} mail={state.mail} goCG={(id) => { setView("cg"); setSel(id); refresh(); }} />}
       {mode === "work" && view === "customer" && <Customer />}
       {view === "knowledge" && <Knowledge say={say} />}
+      {deskOpen && state.desk && <DeskPicker desk={state.desk} onClose={() => setDeskOpen(false)} onSaved={(r) => { setDeskOpen(false); say("Desk: " + r.home + " · " + r.desk + ". Re-checked " + r.rechecked + " set(s)"); refresh(); }} />}
       {toast && <div className="toast">{toast}</div>}
     </div>);
 }
@@ -148,6 +152,24 @@ function MailConnect({ mail, onClose }) {
     </div></div>);
 }
 
+// ======================= Desk: whose inbox is this =======================
+function DeskPicker({ desk, onClose, onSaved }) {
+  const [mode, setMode] = useState(desk.mode), [home, setHome] = useState(desk.home), [team, setTeam] = useState(desk.team), [busy, setBusy] = useState(false);
+  const pick = (m) => { setMode(m); setHome(desk.presets[m].home); setTeam(desk.presets[m].team); };
+  const save = () => { setBusy(true); post("/desk", { mode, home, team }).then((r) => { setBusy(false); onSaved(r); }); };
+  const opts = [["supplier", "Supplier's CG team", "Documents come in from the manufacturers that make your goods. The agent checks them against each end customer's requirements, then they go to the customer.", "Inbox from manufacturers · scorecard by manufacturer"],
+    ["customer", "Customer's CG team", "Documents come in from your suppliers. The agent checks them against your own import rules before clearance.", "Inbox from suppliers · scorecard by supplier"]];
+  return (
+    <div className="drawer-bg" onClick={onClose}><div className="modal" onClick={(e) => e.stopPropagation()}>
+      <h3>Whose desk is this inbox?</h3>
+      <p className="sub">Same agent, same code. The desk decides which rules run, who the other side is, and whose name signs the reply. Changing it re-checks every set already read (no new model calls).</p>
+      <div className="deskopts">{opts.map(([k, t, d, f]) => <button key={k} className={"deskopt" + (mode === k ? " on" : "")} onClick={() => pick(k)}><b>{t}</b><span>{d}</span><i>{f}</i></button>)}</div>
+      <label>Organisation (the home party)<input value={home} onChange={(e) => setHome(e.target.value)} /></label>
+      <label>Team name (signs the reply)<input value={team} onChange={(e) => setTeam(e.target.value)} /></label>
+      <div className="row2"><button className="btn ghost" onClick={onClose}>Cancel</button><button className="btn primary" disabled={busy || !home} onClick={save}>{busy ? "Re-checking…" : "Save and re-check"}</button></div>
+    </div></div>);
+}
+
 // ======================= CG =======================
 function CG({ state, level, sel, setSel, refresh, say }) {
   const [up, setUp] = useState(false);
@@ -172,7 +194,7 @@ function CG({ state, level, sel, setSel, refresh, say }) {
           <p>{metrics.baseline_hours_note}</p>
         </div>}
       </aside>
-      <main className="detail">{sel ? <Packet id={sel} level={level} refresh={refresh} say={say} /> : <div className="empty big">Select a document set</div>}</main>
+      <main className="detail">{sel ? <Packet key={sel + "|" + (state.desk ? state.desk.mode + state.desk.home : "")} id={sel} level={level} refresh={refresh} say={say} /> : <div className="empty big">Select a document set</div>}</main>
       {up && <Upload channel="upload" onClose={() => setUp(false)} onDone={(id) => { setUp(false); setSel(id); refresh(); }} />}
     </div>);
 }
@@ -185,7 +207,7 @@ function InboxRow({ p, level, on, onClick }) {
     : p.status === "error" ? <span className="tag bad">Error</span> : <span className="tag warn">Reading…</span>;
   return (
     <button className={"row" + (on ? " on" : "")} onClick={onClick}>
-      <div className="r1"><span className={"ch " + p.channel}>{p.channel === "a2a" ? "A2A" : p.channel === "email" ? "Email" : "Upload"}</span><b>{p.from_addr}</b><span className="t">{ago(p.received_at)}</span></div>
+      <div className="r1"><span className={"ch " + p.channel}>{p.channel === "a2a" ? "A2A" : p.channel === "email" ? "Email" : "Upload"}</span><b title={p.from_addr}>{p.counterparty || p.from_addr}</b><span className="t">{ago(p.received_at)}</span></div>
       <div className="r2">{p.subject}</div>
       <div className="r3">{status}{p.status === "ready" && p.draft_placed_at && <span className="tag gm">Draft in Gmail</span>}{level >= 2 && p.days_to_eta != null && <span className="tag muted">ETA in {p.days_to_eta}d</span>}{level >= 3 && p.risk_per_day ? <span className="tag bad-o">{money(p.risk_per_day)}/day at risk</span> : null}</div>
     </button>);
@@ -204,7 +226,7 @@ function Packet({ id, level, refresh, say }) {
   const reading = !["ready", "replied", "error"].includes(p.status);
   return (
     <div className="packet">
-      <EmailHeader p={p} docs={d.docs} />
+      <EmailHeader p={{ ...p, scope: d.scope }} docs={d.docs} />
       {reading || p.status === "error" ? <Incoming d={d} /> : <>
         <div className="tabs">
           <button className={tab === "result" ? "on" : ""} onClick={() => setTab("result")}>Verification</button>
@@ -225,7 +247,7 @@ function EmailHeader({ p, docs }) {
   return (
     <div className="mail">
       <div className="m1"><span className={"ch " + p.channel}>{p.channel === "a2a" ? "A2A · pre-checked by SU agent, re-verified here" : p.channel === "email" ? "Email" : "Uploaded"}</span><b>{p.subject}</b></div>
-      <div className="m2">From <b>{p.from_addr}</b> · {new Date(p.received_at).toLocaleString()}{p.shipment_ref ? <> · Shipment <b>{p.shipment_ref}</b></> : null}{p.customer ? <> · Customer <b>{p.customer}</b></> : null}</div>
+      <div className="m2">From <b>{p.from_addr}</b>{p.scope && p.scope.counterparty ? <> · {cap(p.scope.counterparty_role)} <b>{p.scope.counterparty}</b></> : null} · {new Date(p.received_at).toLocaleString()}{p.shipment_ref ? <> · Shipment <b>{p.shipment_ref}</b></> : null}{p.customer ? <> · Customer <b>{p.customer}</b></> : null}</div>
       <div className="atts">{docs.map((x) => <a key={x.id} className={"att " + x.status} href={API + "/doc/" + x.id + "/file"} target="_blank" title={x.error || x.extractor || ""}>
         <span>{DOC[x.doc_type] || (x.status === "reading" ? "…" : "?")}</span>{x.filename}{x.status === "duplicate" ? " (copy)" : ""}</a>)}</div>
     </div>);
@@ -258,10 +280,20 @@ function Result({ d, level, onFocus }) {
         <div className="big ok"><b>{s.match || 0}</b><span>matched</span></div>
         <div className="verdict">{(s.mismatch || s.uncertain) ? <>The agent drafted an <b>amendment request</b>. Nothing is approved while a field is uncertain.</> : <>Everything matched. The agent drafted an <b>approval</b>.</>}<br /><span className="sub">{d.docs.filter((x) => x.status === "read").length} documents · {cs.length} checks · reading confidence shown per field{d.usage && d.usage.calls ? " · read for $" + d.usage.usd.toFixed(3) + " (" + d.usage.calls + " model calls)" : ""}</span></div>
       </div>
+      {d.scope && <DeskScope s={d.scope} />}
       {level >= 1 && <Enrich e={e} level={level} />}
       {groups.map(([k, title, open]) => { const rows = cs.filter((c) => eff(c) === k); if (!rows.length) return null;
         return <details key={k} open={open} className={"grp " + k}><summary><span className={"dot " + ST[k][1]}>{ST[k][0]}</span>{title} <span className="n">{rows.length}</span></summary>
           {rows.map((c) => <CheckRow key={c.id} c={c} onClick={() => onFocus(c.id)} />)}</details>; })}
+    </div>);
+}
+
+function DeskScope({ s }) {
+  const sk = s.skipped || [];
+  return (
+    <div className="deskscope">
+      <span>Checked for <b>{s.home}</b> · {s.desk}{s.counterparty ? <> · {s.counterparty_role} <b>{s.counterparty}</b></> : null}{s.customer && s.mode === "supplier" ? <> · customer <b>{s.customer}</b></> : null}</span>
+      <span className="sub">{s.applied} rules apply{sk.length ? " · not for this desk: " + sk.map((r) => r.id + " (" + r.why + ")").join("; ") : ""}</span>
     </div>);
 }
 
@@ -541,6 +573,9 @@ function Outcomes({ party }) {
         </div>
         <h3>What the agent catches most</h3>
         <table className="ft"><tbody>{d.top_rules.map((r) => <tr key={r.rule_name}><td>{r.rule_name}</td><td className="n">{r.n.toLocaleString()}</td></tr>)}</tbody></table>
+        {d.scorecard && d.desk && <><h3>By {d.desk.counterparty} · {d.desk.home} {d.desk.mode === "supplier" ? "export" : "import"} desk</h3><table className="ft"><thead><tr><th>{cap(d.desk.counterparty)}</th><th>Shipments</th><th>First-pass yield</th><th>Rounds per shipment</th></tr></thead><tbody>
+          {d.scorecard.map((s) => <tr key={s.name}><td>{s.name}</td><td>{s.shipments.toLocaleString()}</td><td>{pct(s.fpy)}</td><td>{s.rounds.toFixed(2)}</td></tr>)}</tbody></table>
+          <p className="sub">Which {d.desk.counterparties} send clean sets first time, and which need the most rounds.</p></>}
       </>}
       {ms.length > 0 && party === "supplier" && <>
         <div className="kpis2">
@@ -579,8 +614,8 @@ function Knowledge({ say }) {
           <td>{f.status === "proposed" && <span className="row2"><button className="btn ok sm" onClick={() => act(f, "confirmed")}>Confirm</button><button className="btn ghost sm" onClick={() => act(f, "rejected")}>Reject</button></span>}</td></tr>)}
       </tbody></table>
       <h3>Rules <span className="sub">(precedence: regulation → trade agreement → customer → shipment)</span></h3>
-      <table className="ft"><thead><tr><th>ID</th><th>Rule</th><th>Scope</th><th>Severity</th><th>Needs</th><th>Why</th></tr></thead><tbody>
-        {d.rules.map((r) => <tr key={r.id}><td className="mono">{r.id}</td><td>{r.name}</td><td>{r.scope_level} · {r.scope_key}</td><td>{r.severity}</td><td>{r.level ? LEVELS[r.level].label : "documents"}</td><td className="sub">{r.explain}</td></tr>)}
+      <table className="ft"><thead><tr><th>ID</th><th>Rule</th><th>Scope</th><th>Belongs to</th><th>Severity</th><th>Needs</th><th>Why</th></tr></thead><tbody>
+        {d.rules.map((r) => <tr key={r.id}><td className="mono">{r.id}</td><td>{r.name}</td><td>{r.scope_level} · {r.scope_key}</td><td className="sub">{r.party ? r.party + " · " + r.visibility : "everyone"}</td><td>{r.severity}</td><td>{r.level ? LEVELS[r.level].label : "documents"}</td><td className="sub">{r.explain}</td></tr>)}
       </tbody></table>
       <h3>Document types</h3>
       <div className="dts">{d.doc_types.map((t) => <span key={t.id} className="dchip">{t.name}{t.connected_data ? " · connected data" : t.required_in_packet ? " · required" : ""}</span>)}</div>

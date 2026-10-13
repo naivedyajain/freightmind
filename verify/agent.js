@@ -1,7 +1,8 @@
 // The CG agent: packet in → read every document → verify → flag → draft a reply (never sends) → store.
 const { db, J } = require("./store");
 const { extract, expand, mimeOf } = require("./extract");
-const { verify, docLabel, normParty } = require("./engine");
+const { verify, rulesFor, docLabel, normParty } = require("./engine");
+const deskMod = require("./desk");
 const usage = require("./usage");
 
 let callLLM = null, onReady = null;
@@ -92,7 +93,7 @@ function markDuplicates(id) {
       else db.prepare("UPDATE documents SET error=? WHERE id=?").run("another version of " + g[0].filename + " with different content", d.id);
   }
 }
-function finish(id) {
+function finish(id, opts = {}) {
   markDuplicates(id);
   const docs = loadDocs(id).filter((d) => d.status !== "duplicate");
   // documents that are "connected data" (booking, loading plan) become system records, as if they came from GoComet's systems
@@ -103,7 +104,16 @@ function finish(id) {
   const shipmentRef = inv ? inv.fields.shipment_ref || inv.fields.invoice_no : null;
   const customer = inv ? inv.fields.sold_to_name : null;
   step(id, "Classified documents", summarizeTypes(docs));
-  const checks = verify(forVerification(docs), connectedFor(docs), 4);
+  // whose desk this is decides the counterparty and which rules run
+  const D = deskMod.desk();
+  const pkt = db.prepare("SELECT from_addr FROM packets WHERE id=?").get(id);
+  const who = deskMod.parties(docs, pkt && pkt.from_addr);
+  const cp = deskMod.counterparty(who, D);
+  const scope = { home: D.home, customer, counterparty: cp };
+  const rs = rulesFor(scope);
+  db.prepare("UPDATE packets SET counterparty=?, scope_json=? WHERE id=?").run(cp, JSON.stringify({ mode: D.mode, desk: D.desk, home: D.home, team: D.team, counterparty: cp, counterparty_role: D.counterparty, customer, seller: who.seller, maker: who.maker, applied: rs.applied.length, skipped: rs.skipped }), id);
+  step(id, "Scoped to " + D.home + " · " + D.desk.toLowerCase(), rs.applied.length + " rules apply" + (rs.skipped.length ? ", " + rs.skipped.length + " not for this desk" : "") + (cp ? " · " + D.counterparty + ": " + cp : ""));
+  const checks = verify(forVerification(docs), connectedFor(docs), 4, scope);
   db.prepare("DELETE FROM checks WHERE packet_id=?").run(id);
   const ins = db.prepare(`INSERT INTO checks(packet_id,rule_id,rule_name,subject,status,severity,level,docs_json,expected,found,confidence,explanation,path_json,customer,shipment_ref)
     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
@@ -112,9 +122,15 @@ function finish(id) {
   step(id, "Checked " + checks.length + " items", s.mismatch + " mismatch · " + s.uncertain + " uncertain · " + s.match + " match");
   db.prepare("UPDATE packets SET status='ready', shipment_ref=?, customer=?, summary_json=? WHERE id=?").run(shipmentRef, customer, JSON.stringify(s), id);
   step(id, "Drafted reply", s.mismatch + s.uncertain ? "amendment request" : "approval");
-  if (onReady) Promise.resolve(onReady(id)).catch((e) => step(id, "Could not hand the reply to the mailbox", e.message));
+  if (onReady && !opts.quiet) Promise.resolve(onReady(id)).catch((e) => step(id, "Could not hand the reply to the mailbox", e.message));
 }
-function reverify(id) { finish(id); }
+function reverify(id, opts) { finish(id, opts); }
+// the desk changed: re-check every live set (documents are already read, so no model calls)
+function reverifyAll() {
+  const ids = db.prepare("SELECT id FROM packets WHERE synthetic=0 AND status IN ('ready','replied')").all().map((r) => r.id);
+  for (const id of ids) { try { finish(id, { quiet: true }); } catch (_) {} }
+  return ids;
+}
 
 // a final document supersedes its draft; connected-data documents are not part of the set being checked
 function forVerification(docs) {
@@ -147,12 +163,12 @@ function getPacket(id, level = 0) {
       effective: d && d.cg_status === "accepted" ? "accepted" : c.status };
   });
   const enrich = enrichment(p, docs, checks, level);
-  return { usage: usage.forPacket(id), packet: { ...p, progress: J(p.progress_json, []), summary: tally(checks.map((c) => ({ status: c.effective === "accepted" ? "match" : c.status }))) },
+  return { usage: usage.forPacket(id), scope: J(p.scope_json), packet: { ...p, progress: J(p.progress_json, []), summary: tally(checks.map((c) => ({ status: c.effective === "accepted" ? "match" : c.status }))) },
     docs, checks, enrichment: enrich, draft: J(p.draft_json) || composeDraft(p, docs, checks, enrich), learned: learnedFromAmendments(docs) };
 }
 
 function listPackets(level = 0, channelFilter) {
-  const rows = db.prepare("SELECT id, channel, via, from_addr, subject, received_at, status, shipment_ref, customer, replied_at, outcome, draft_placed_at FROM packets WHERE synthetic=0 ORDER BY id DESC").all();
+  const rows = db.prepare("SELECT id, channel, via, from_addr, counterparty, subject, received_at, status, shipment_ref, customer, replied_at, outcome, draft_placed_at FROM packets WHERE synthetic=0 ORDER BY id DESC").all();
   return rows.filter((r) => (channelFilter ? channelFilter.includes(r.channel) : r.channel !== "precheck")).map((r) => {
     const cs = db.prepare("SELECT status FROM checks WHERE packet_id=? AND level<=?").all(r.id, level);
     const docs = loadDocs(r.id);
@@ -220,9 +236,14 @@ function composeDraft(p, docs, checks, enrich) {
   const cust = p.customer ? " for " + p.customer : "";
   const subject = /^re:/i.test(p.subject) ? p.subject : "Re: " + p.subject;
   const where = (c) => (c.docs || []).map((d) => d.filename).filter((v, i, a) => a.indexOf(v) === i).slice(0, 3).join(", ");
+  const D = deskMod.desk();
+  const sign = "Regards,\n" + D.team + ", " + D.home;
+  const cpName = p.counterparty ? " (" + p.counterparty + ")" : "";
+  const released = D.mode === "supplier" ? "The set is approved and will go to " + (p.customer || "the customer") + "." : "The set is accepted and goes to import clearance.";
+  const tip = D.mode === "supplier" ? "check your next set against " + (p.customer || "this customer") + "'s requirements before sending" : "check your next set against our import requirements before sending";
   let body;
   if (!open.length && !unsure.length) {
-    body = `Hello,\n\nThank you for the documents for ${ref}${cust}.\n\nWe checked ${checks.filter((c) => c.status !== "skipped").length} items across ${docs.length} documents and everything matches. The set is approved and will be released to the customer.\n\nRegards,\nExport Documentation (CG)`;
+    body = `Hello,\n\nThank you for the documents for ${ref}${cust}.\n\nWe checked ${checks.filter((c) => c.status !== "skipped").length} items across ${docs.length} documents and everything matches. ${released}\n\n${sign}`;
   } else {
     const lines = open.map((c, i) => `${i + 1}. ${c.subject}\n   Found: ${c.found}\n   Expected: ${c.expected || "—"}\n   In: ${where(c) || "—"}`);
     const qs = unsure.map((c, i) => `${i + 1}. ${c.subject}: ${c.found}${c.expected ? " (expected " + c.expected + ")" : ""}`);
@@ -230,7 +251,7 @@ function composeDraft(p, docs, checks, enrich) {
       (lines.length ? `\nPlease correct and resend:\n\n${lines.join("\n\n")}\n` : "") +
       (qs.length ? `\nPlease confirm the following, which we could not verify:\n\n${qs.join("\n")}\n` : "") +
       (enrich && enrich.days_to_eta != null ? `\nThe vessel is due on ${enrich.eta}, so corrections are needed before then to avoid delays at destination.\n` : "") +
-      `\nTip: you can check your next set against this customer's requirements before sending: https://freightmind/precheck (concept)\n\nRegards,\nExport Documentation (CG)`;
+      `\nTip: you can ${tip}: add +precheck to our address and the agent replies in minutes.\n\n${sign}`;
   }
   return { to: p.from_addr, subject, body, kind: open.length || unsure.length ? "amendment" : "approval", generated: true };
 }
@@ -286,7 +307,8 @@ function precheckReply(id, cgAddress) {
   const where = (c) => [...new Set((c.docs || []).map((x) => x.filename))].slice(0, 3).join(", ");
   const n = d.docs.filter((x) => x.status !== "duplicate").length;
   const headline = open.length ? "PRE-CHECK: " + open.length + " issue(s) will get this set rejected. Fix before sending to CG." : unsure.length ? "PRE-CHECK: ready to send; " + unsure.length + " item(s) CG may ask about." : "PRE-CHECK: ready to send. Nothing CG would reject.";
-  let text = headline + "\n\nHello,\n\nI checked your " + n + " documents" + (p.customer ? " for " + p.customer : "") + " before you send them to CG.\n";
+  const D = deskMod.desk();
+  let text = headline + "\n\nHello,\n\nI checked your " + n + " documents" + (p.customer ? " for " + p.customer : "") + " against what " + D.home + "'s " + D.team.toLowerCase() + " team checks, before you send them.\n";
   if (open.length) text += "\nThese will get the set rejected. Please fix them first:\n\n" + open.map((c, i) => (i + 1) + ". " + c.subject + "\n   Found: " + c.found + "\n   Expected: " + (c.expected || "—") + "\n   In: " + where(c)).join("\n\n") + "\n";
   if (unsure.length) text += "\nCG is likely to ask about these. Add a line of explanation in your email:\n\n" + unsure.map((c, i) => (i + 1) + ". " + c.subject + ": " + c.found).join("\n") + "\n";
   if (!open.length && !unsure.length) text += "\nEverything matches. The set is ready for CG.\n";
@@ -315,4 +337,4 @@ function seedHistory() {
 }
 seedHistory();
 
-module.exports = { retry, setLLM, setOnReady, precheckReply, notePlaced, markRepliedFromMail, step, createPacket, getPacket, listPackets, decide, saveDraft, markSent, reverify, loadDocs, tally };
+module.exports = { reverifyAll, retry, setLLM, setOnReady, precheckReply, notePlaced, markRepliedFromMail, step, createPacket, getPacket, listPackets, decide, saveDraft, markSent, reverify, loadDocs, tally };

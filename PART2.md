@@ -43,6 +43,25 @@ SU email + attachments ──► CG mailbox (IMAP) ──► agent reads every d
 A final document supersedes its draft. Identical copies are ignored; different versions are both checked and compared.
 Approval is drafted only when every check passes. Only CG sends.
 
+## Whose desk is this inbox? (two setups, same code)
+
+The CG team can sit on either side. One setting (the **desk** pill in the header) switches between them;
+live sets are re-checked from the documents already read, so no new model calls.
+
+| | Supplier's CG team | Customer's CG team |
+|---|---|---|
+| Inbox receives from | Manufacturers making the supplier's goods | Suppliers |
+| Rules that run | Shared rules + the supplier's own + each end customer's shared requirements | Shared rules + the customer's own + suppliers' shared rules |
+| Counterparty on each set | Manufacturer (BL shipper / COO exporter) | Supplier (invoice seller) |
+| Reply signed by | e.g. Export documentation, Unilever | e.g. Import documentation, RP Investments |
+| CG outcomes scorecard | By manufacturer | By supplier |
+
+A rule can belong to one party (`rules.party`). It runs on that party's desk, and on another desk only if the
+party shares it (visibility not private) and is the customer or counterparty on the set. On 580026:
+the supplier desk (Unilever) runs Unilever's private classification and QA rules; the customer desk
+(RP Investments) drops them and runs its own certificate-of-origin requirement instead.
+Code: `verify/desk.js`, `engine.rulesFor`.
+
 ## Architecture: fixed; configuration: data
 
 | Fixed (code) | Data (knowledge store tables) |

@@ -54,11 +54,11 @@ seedDemo();
 // ---------------- metrics ----------------
 const median = (a) => { if (!a.length) return null; const s = [...a].sort((x, y) => x - y); return s[Math.floor(s.length / 2)]; };
 function rows(includeDemo) {
-  return db.prepare(`SELECT id, channel, from_addr, received_at, replied_at, outcome, shipment_ref, customer, synthetic, demo_json, summary_json
+  return db.prepare(`SELECT id, channel, from_addr, counterparty, received_at, replied_at, outcome, shipment_ref, customer, synthetic, demo_json, summary_json
     FROM packets WHERE ${includeDemo ? "1=1" : "synthetic=0"} ORDER BY received_at`).all().map((p) => {
     const demo = J(p.demo_json, {}), sum = J(p.summary_json, {});
     const mism = p.synthetic ? sum.mismatch || 0 : db.prepare("SELECT COUNT(*) n FROM checks WHERE packet_id=? AND status='mismatch' AND level=0").get(p.id).n;
-    return { ...p, month: (p.received_at || "").slice(0, 7), supplier: demo.supplier || p.from_addr, held: demo.held || 0, mism };
+    return { ...p, month: (p.received_at || "").slice(0, 7), supplier: demo.supplier || p.counterparty || p.from_addr, held: demo.held || 0, mism };
   });
 }
 function byMonth(list, includeDemo, filter) {
@@ -119,7 +119,8 @@ function outcomes(party, includeDemo = true, who = null) {
   return { party, terms: T, months, ytd, who,
     options: { suppliers: [...new Set(all.map((p) => p.supplier))].filter(Boolean), customers: [...new Set(all.map((p) => p.customer))].filter(Boolean) },
     top_rules: topRules(filt, includeDemo), guardrail: guardrail(),
-    scorecard: party === "customer" ? scorecard(includeDemo, "supplier", filt) : party === "supplier" ? scorecard(includeDemo, "customer", filt) : null,
+    scorecard: party === "customer" || party === "cg" ? scorecard(includeDemo, "supplier", filt) : party === "supplier" ? scorecard(includeDemo, "customer", filt) : null,
+    desk: require("./desk").desk(),
     has_demo: all.some((p) => p.synthetic), has_live: all.some((p) => !p.synthetic) };
 }
 module.exports = { outcomes, terms, setTerms };
