@@ -256,7 +256,8 @@ function precheckReply(id, cgAddress) {
   const open = d.checks.filter((c) => c.status === "mismatch"), unsure = d.checks.filter((c) => c.status === "uncertain");
   const where = (c) => [...new Set((c.docs || []).map((x) => x.filename))].slice(0, 3).join(", ");
   const n = d.docs.filter((x) => x.status !== "duplicate").length;
-  let text = "Hello,\n\nI checked your " + n + " documents" + (p.customer ? " for " + p.customer : "") + " before you send them to CG.\n";
+  const headline = open.length ? "PRE-CHECK: " + open.length + " issue(s) will get this set rejected. Fix before sending to CG." : unsure.length ? "PRE-CHECK: ready to send; " + unsure.length + " item(s) CG may ask about." : "PRE-CHECK: ready to send. Nothing CG would reject.";
+  let text = headline + "\n\nHello,\n\nI checked your " + n + " documents" + (p.customer ? " for " + p.customer : "") + " before you send them to CG.\n";
   if (open.length) text += "\nThese will get the set rejected. Please fix them first:\n\n" + open.map((c, i) => (i + 1) + ". " + c.subject + "\n   Found: " + c.found + "\n   Expected: " + (c.expected || "—") + "\n   In: " + where(c)).join("\n\n") + "\n";
   if (unsure.length) text += "\nCG is likely to ask about these. Add a line of explanation in your email:\n\n" + unsure.map((c, i) => (i + 1) + ". " + c.subject + ": " + c.found).join("\n") + "\n";
   if (!open.length && !unsure.length) text += "\nEverything matches. The set is ready for CG.\n";

@@ -67,6 +67,42 @@ function MailPill({ mail, onPoll }) {
         <button className="pill muted" onClick={() => setOpen(true)} title="Change mailbox">⚙</button></span>;
   return <>{pill}{open && <MailConnect mail={mail} onClose={() => setOpen(false)} />}</>;
 }
+const RELAY_CODE = `const SECRET = "";
+function doPost(e) {
+  try {
+    const d = JSON.parse(e.postData.contents);
+    if (SECRET && d.secret !== SECRET) return out({ ok: false, error: "wrong secret" });
+    if (d.inReplyTo) {
+      const t = GmailApp.search("rfc822msgid:" + String(d.inReplyTo).replace(/[<>]/g, ""), 0, 1);
+      if (t.length) { const m = t[0].getMessages(); m[m.length - 1].reply(d.text); return out({ ok: true, threaded: true }); }
+    }
+    GmailApp.sendEmail(d.to, d.subject, d.text);
+    return out({ ok: true, threaded: false });
+  } catch (err) { return out({ ok: false, error: String(err) }); }
+}
+function out(o) { return ContentService.createTextOutput(JSON.stringify(o)).setMimeType(ContentService.MimeType.JSON); }`;
+function Relay({ mail }) {
+  const [url, setUrl] = useState("");
+  const [secret, setSecret] = useState("");
+  const [r, setR] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const save = () => { setBusy(true); post("/mail/relay", { url, secret }).then((x) => { setBusy(false); setR(x); }); };
+  return (
+    <details className="relay" open={!!mail.smtp_blocked && !mail.relay}>
+      <summary>Outgoing email {mail.relay ? <span className="tag ok">relay connected</span> : mail.smtp_blocked ? <span className="tag bad">blocked on this server</span> : <span className="tag muted">optional</span>}</summary>
+      <p className="sub">Pre-check replies are sent to suppliers. Some hosts block outgoing mail, so send through your own Gmail over HTTPS instead (3 minutes, free):</p>
+      <ol className="sub steps2">
+        <li>Signed in as {mail.user}, open <a href="https://script.google.com/home/projects/create" target="_blank">script.google.com → New project</a></li>
+        <li>Replace the code with this, then Save: <button className="btn ghost sm" onClick={() => { try { navigator.clipboard.writeText(RELAY_CODE); } catch (_) {} }}>Copy code</button></li>
+        <li>Deploy → New deployment → type <b>Web app</b> · Execute as <b>Me</b> · Who has access <b>Anyone</b> → Deploy → Authorise</li>
+        <li>Copy the <b>Web app URL</b> and paste it here:</li>
+      </ol>
+      <pre className="code">{RELAY_CODE}</pre>
+      <label>Web app URL<input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://script.google.com/macros/s/…/exec" /></label>
+      <div className="row2"><button className="btn primary" disabled={!url || busy} onClick={save}>{busy ? "Testing…" : "Save and send a test"}</button></div>
+      {r && (r.ok ? <div className="rhint">{r.tested ? "Test email sent to " + mail.user + " through the relay. Pre-check replies will now go out." : r.note || "Saved."}</div> : <div className="err"><b>Relay error:</b> {r.error}</div>)}
+    </details>);
+}
 function MailConnect({ mail, onClose }) {
   const [user, setUser] = useState((mail && mail.user) || "");
   const [pass, setPass] = useState("");
@@ -83,6 +119,7 @@ function MailConnect({ mail, onClose }) {
           <b>Suppliers send documents to</b> {r.addresses.cg}: the CG agent checks them and leaves a draft reply in the thread.<br />
           <b>Suppliers pre-check at</b> {r.addresses.precheck}: the supplier's agent replies with what to fix. Nothing goes to CG.</div>
         : <div className="err"><b>Gmail said:</b> {r.error}{r.hint && <><br /><b>Fix:</b> {r.hint}</>}</div>)}
+      {mail && mail.configured && <Relay mail={mail} />}
       {mail && mail.lastError && !r && <div className="err"><b>Last error:</b> {mail.lastError}{mail.hint && <><br /><b>Fix:</b> {mail.hint}</>}</div>}
       <div className="row2"><button className="btn ghost" onClick={onClose}>Close</button>{mail && mail.configured && <button className="btn ghost" onClick={() => post("/mail/disconnect").then(onClose)}>Disconnect</button>}
         <button className="btn primary" disabled={!user || !pass || busy} onClick={go}>{busy ? "Testing login…" : "Connect"}</button></div>
@@ -102,6 +139,7 @@ function CG({ state, level, sel, setSel, refresh, say }) {
           <div><span>Suppliers send documents to</span><b>{state.mail.addresses.cg}</b></div>
           <div><span>Pre-check before sending</span><b>{state.mail.addresses.precheck}</b></div>
           <i>Replies wait as drafts in the Gmail thread. CG sends from Gmail as always.</i>
+          {state.mail.smtp_blocked && !state.mail.relay && <i className="bad-t">Pre-check replies can't leave this server. Click ⚙ (top right) → Outgoing email.</i>}
         </div> : <div className="addr muted"><i>Connect the mailbox (top right) to receive documents by email. Or upload a set:</i></div>}
         <button className="btn ghost full" onClick={() => setUp(true)}>+ Upload an SU email</button>
         {state.packets.map((p) => <InboxRow key={p.id} p={p} level={level} on={sel === p.id} onClick={() => setSel(p.id)} />)}

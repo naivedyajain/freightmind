@@ -127,6 +127,14 @@ module.exports = function mount(app, { callWithKeys }) {
   r.post("/mail/poll", async (req, res) => res.json(await mail.pollOnce(hooks)));
   r.post("/mail/connect", async (req, res) => res.json(await mail.connect(req.body.user, req.body.pass, hooks)));
   r.post("/mail/disconnect", (req, res) => { mail.disconnect(); res.json({ ok: true }); });
+  // send relay: save, then send a test message to the mailbox itself so the user sees it work
+  r.post("/mail/relay", async (req, res) => {
+    mail.setRelay(req.body.url, req.body.secret);
+    if (!req.body.url) return res.json({ ok: true, cleared: true });
+    if (!mail.configured()) return res.json({ ok: true, note: "Saved. Connect the mailbox to test it." });
+    try { await mail.relaySend({ to: mail.addresses().cg, subject: "FreightMind: send relay works", text: "This test came through the Apps Script relay. Pre-check replies will now reach suppliers." }); res.json({ ok: true, tested: true }); }
+    catch (e) { mail.setRelay(null); res.json({ ok: false, error: e.message }); }
+  });
 
   app.use("/api/v", r);
   mail.start(hooks);

@@ -10,7 +10,19 @@ const MailComposer = require("nodemailer/lib/mail-composer");
 const { db } = require("./store");
 
 // Credentials: env vars, or entered in the app (kept in memory only; never written to disk; gone on restart).
-const runtime = { user: null, pass: null };
+const runtime = { user: null, pass: null, relay: null, relaySecret: null };
+// Outgoing relay over HTTPS (a Google Apps Script web app in the same Gmail account): works where hosts block SMTP.
+const relayUrl = () => runtime.relay || process.env.MAIL_RELAY_URL || null;
+const relaySecret = () => runtime.relaySecret || process.env.MAIL_RELAY_SECRET || "";
+function setRelay(url, secret) { runtime.relay = url ? String(url).trim() : null; runtime.relaySecret = secret ? String(secret).trim() : null; }
+async function relaySend({ to, subject, text, inReplyTo }) {
+  const r = await fetch(relayUrl(), { method: "POST", headers: { "content-type": "application/json" }, redirect: "follow",
+    body: JSON.stringify({ secret: relaySecret(), to, subject, text, inReplyTo: inReplyTo || null }) });
+  const body = await r.text();
+  let j; try { j = JSON.parse(body); } catch (_) { throw new Error("relay did not return JSON (HTTP " + r.status + "). Check the web app is deployed with access: Anyone. " + body.slice(0, 120)); }
+  if (!j.ok) throw new Error("relay: " + (j.error || "failed"));
+  return j;
+}
 // Gmail's app-password screen copies invisible non-breaking spaces; keep letters and digits only.
 const clean = (p) => String(p || "").replace(/[^A-Za-z0-9]/g, "");
 const cfg = () => ({
@@ -153,6 +165,10 @@ async function placeDraft({ to, subject, text, inReplyTo, replaceId, attachments
 async function deliver({ to, subject, text, inReplyTo, attachments, agent }) {
   if (!configured()) return { sent: false, reason: "No mailbox connected" };
   const c = cfg();
+  if (relayUrl()) {
+    try { const j = await relaySend({ to, subject, text, inReplyTo }); return { sent: true, via: "relay", threaded: !!j.threaded }; }
+    catch (e) { state.lastRelayError = e.message; }
+  }
   const msg = { from: c.user, to, subject, text, attachments, headers: { [AGENT_HEADER]: agent || "cg", "Auto-Submitted": agent === "su-precheck" ? "auto-replied" : "no" }, ...(inReplyTo ? { inReplyTo, references: [inReplyTo] } : {}) };
   let lastErr;
   for (const [port, secure] of [[465, true], [587, false]]) {
@@ -164,9 +180,10 @@ async function deliver({ to, subject, text, inReplyTo, attachments, agent }) {
   }
   // outgoing SMTP blocked by the host: leave it as a draft in the thread instead
   const d = await placeDraft({ to, subject, text, inReplyTo, attachments });
-  return { sent: false, drafted: d.placed, reason: "Outgoing mail is blocked on this server (" + (lastErr && lastErr.message) + "). Saved as a Gmail draft in the thread: open Gmail → Drafts → Send." };
+  state.smtpBlocked = true;
+  return { sent: false, drafted: d.placed, reason: (relayUrl() ? "Relay failed (" + state.lastRelayError + ") and outgoing" : "Outgoing") + " mail is blocked on this server (" + (lastErr && lastErr.message) + "). Saved as a Gmail draft in the thread: open Gmail → Drafts → Send. Fix: connect the send relay." };
 }
 
-const status = () => ({ configured: configured(), user: configured() ? cfg().user : null, addresses: configured() ? addresses() : null, mode: "drafts-only for CG",
+const status = () => ({ relay: !!relayUrl(), relay_error: state.lastRelayError || null, smtp_blocked: !!state.smtpBlocked, configured: configured(), user: configured() ? cfg().user : null, addresses: configured() ? addresses() : null, mode: "drafts-only for CG",
   host: cfg().imapHost, source: runtime.pass ? "entered in app (memory only)" : configured() ? "environment" : null, ...state, hint: hint(state.lastError), every_s: cfg().everyMs / 1000 });
-module.exports = { start, pollOnce, status, configured, connect, disconnect, placeDraft, deliver, addresses };
+module.exports = { start, pollOnce, status, configured, connect, disconnect, placeDraft, deliver, addresses, setRelay, relaySend };
