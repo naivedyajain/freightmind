@@ -466,7 +466,7 @@ const pct = (x) => (x == null ? "—" : Math.round(x * 100) + "%");
 const fmtMin = (m) => (m == null ? "—" : m >= 90 ? (m / 60).toFixed(1) + " h" : Math.round(m) + " min");
 const mon = (m) => ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"].at(Number(m.slice(5, 7)) - 1);
 function Trend({ months, get, fmt, title, good }) {
-  const W = 300, H = 110, L = 34, R = 10, T = 18, B = 22;
+  const W = 300, H = 110, L = 52, R = 10, T = 18, B = 22;
   const vals = months.map(get), max = Math.max(...vals.filter((x) => x != null), 0) * 1.12 || 1;
   const x = (i) => L + (months.length < 2 ? 0 : i * (W - L - R) / (months.length - 1)), y = (v) => T + (H - T - B) * (1 - v / max);
   const liveI = months.findIndex((m) => m.live);
@@ -487,7 +487,10 @@ function Outcomes({ party }) {
   useEffect(() => { setWho(""); }, [party]);
   useEffect(() => { get("/outcomes?party=" + party + "&demo=" + (demo ? 1 : 0) + (who ? "&who=" + encodeURIComponent(who) : "")).then(setD); }, [party, demo, who]);
   if (!d) return <div className="empty big">Loading…</div>;
-  const ms = d.months, last = ms.at(-1) || {}, first = ms.find((m) => !m.live) || ms[0] || {}, T = d.terms, y = d.ytd;
+  // tiles and trends use complete months; a month with only a handful of sets (e.g. today's tests alongside demo history) is left out
+  const big = Math.max(...d.months.map((m) => m.shipments), 0);
+  const ms = d.months.filter((m) => !(big >= 100 && m.shipments < big * 0.1)), last = ms.at(-1) || {}, first = ms.find((m) => !m.live) || ms[0] || {}, T = d.terms, y = d.ytd;
+  const partial = d.months.length - ms.length;
   const title = { supplier: "Supplier · export manager", cg: "CG · head of documentation", customer: "Customer · supply chain head / CFO" }[party];
   const Tile = ({ l, v, s, hero }) => <div className={"kpi2" + (hero ? " hero" : "")}><span>{l}</span><b>{v}</b><i>{s}</i></div>;
   return (
@@ -500,7 +503,7 @@ function Outcomes({ party }) {
           <label className="chkl"><input type="checkbox" checked={demo} onChange={(e) => setDemo(e.target.checked)} /> include demo history</label>
         </div>
       </div>
-      {demo && d.has_demo && <div className="demo-note">Demo history: Apr–Sep 2026, ~2,000 shipments a month, agent live from June. Generated to show the shape; untick to see only real sets processed here.</div>}
+      {demo && d.has_demo && <div className="demo-note">Demo history: Apr–Sep 2026, ~2,000 shipments a month, agent live from June. Generated to show the shape; untick to see only real sets processed here.{partial ? " Months with only a few sets (this month's live tests) are left out of tiles and trends." : ""}</div>}
       {!ms.length && <div className="empty big">No document sets yet. Process one, or include the demo history.</div>}
       {ms.length > 0 && party === "customer" && <>
         <div className="kpis2">
