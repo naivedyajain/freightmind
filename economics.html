@@ -42,7 +42,7 @@ table{width:100%;border-collapse:collapse;font-size:12.5px}th{text-align:left;ba
     <section class="panel"><h2>Outcome per party, per month</h2><table id="parties"></table></section>
     <section class="panel"><h2>Speed: one shipment's document loop</h2><table id="speed"></table></section>
     <section class="panel"><h2>Where the AI money goes</h2><table id="tokens"></table><p class="note" id="tokennote"></p></section>
-    <section class="panel"><h2>Price and margin</h2><table id="pricing"></table><p class="note">Pricing is a hypothesis to test: CG or the customer pays per set checked; suppliers pre-check free.</p></section>
+    <section class="panel"><h2>The deal: savings shared with GoComet</h2><p class="sub">The buyer's annual savings, the fee at each gain-share level, GoComet's margin after AI cost, and what the buyer keeps.</p><table id="pricing"></table><p class="note" id="dealnote"></p></section>
     <p class="note">Model prices: platform.claude.com/docs/en/about-claude/pricing (USD per million tokens, standard tier, checked Oct 2026). Today's process numbers are assumptions unless marked <span class="tag m">measured</span>; the brief states 2–4 amendment rounds per shipment and 4–24 hours per round. Edit any input.</p>
   </main>
 </div>
@@ -50,7 +50,8 @@ table{width:100%;border-collapse:collapse;font-size:12.5px}th{text-align:left;ba
 const PRICES = { sonnet: { in: 2, out: 10, cr: 0.1, name: "Sonnet 5.5" }, haiku: { in: 0.1, out: 0.5, cr: 0.01, name: "Haiku 5.5" }, opus: { in: 4, out: 20, cr: 0.2, name: "Opus 5.5" } };
 const FIELDS = [
   ["Volume and documents", [
-    ["sets", "Document sets per month", 2000, "one per shipment"],
+    ["containers", "Containers shipped per year", 48000, "the buyer's volume"],
+    ["cntr", "Containers per shipment", 2, "one document set per shipment"],
     ["docs", "Documents per set", 8, "invoice, PL, BL, COO, COAs…"],
     ["scanShare", "Share that are scans (%)", 20, "read by vision"],
     ["pages", "Pages per scanned document", 1.5, ""],
@@ -83,10 +84,14 @@ const FIELDS = [
     ["d1", "Shipments delayed by documents today (%)", 8, ""],
     ["d2", "…with Trilogy (%)", 2, ""],
     ["delayDays", "Days of delay when it happens", 2, ""],
-    ["cntr", "Containers per shipment", 2, ""],
     ["dd", "Demurrage + detention per container-day ($)", 150, ""],
   ]],
-  ["Price", [["price", "Price per set charged ($)", 2.5, "hypothesis"]]],
+  ["Deal", [
+    ["share", "GoComet gain share (% of savings)", 4, "range 1–8%"],
+    ["countCG", "Count CG time savings", 1, "in-house CG: yes · third-party forwarder: no", [[1, "Yes"], [0, "No"]]],
+    ["countSU", "Count supplier time savings", 0, "usually the supplier's, not the buyer's", [[1, "Yes"], [0, "No"]]],
+    ["countDelay", "Count port delay avoided", 1, "", [[1, "Yes"], [0, "No"]]],
+  ]],
 ];
 const v = {}; let measured = null;
 const box = document.getElementById("inputs");
@@ -116,13 +121,17 @@ function calc() {
   const cg1 = v.r1 * v.cgMin1 / 60 * v.cgRate, su1 = Math.max(0, v.r1 - 1) * v.suMin / 60 * v.suRate, dl1 = v.d1 / 100 * v.delayDays * v.cntr * v.dd;
   const cg2 = v.r2 * v.cgMin2 / 60 * v.cgRate, su2 = Math.max(0, v.r2 - 1) * v.suMin / 60 * v.suRate, dl2 = v.d2 / 100 * v.delayDays * v.cntr * v.dd;
   const today = cg1 + su1 + dl1, withT = cg2 + su2 + dl2 + ai, saved = today - withT;
-  const M = v.sets;
+  const sets = v.containers / v.cntr, M = sets / 12; // document sets per month
   const cgHrs = (v.r1 * v.cgMin1 - v.r2 * v.cgMin2) / 60 * M, suHrs = (Math.max(0, v.r1 - 1) - Math.max(0, v.r2 - 1)) * v.suMin / 60 * M;
   const cyc1 = v.r1 * v.h1, cyc2 = v.reply2 / 60 + Math.max(0, v.r2 - 1) * (v.fixH + v.reply2 / 60);
+  // the deal: which savings count, the gain share, who keeps what
+  const dealSave = (v.countCG ? cg1 - cg2 : 0) + (v.countSU ? su1 - su2 : 0) + (v.countDelay ? dl1 - dl2 : 0);
+  const fee = dealSave * v.share / 100;
   // KPIs
   document.getElementById("kpis").innerHTML = [
-    ["AI cost per set", $(ai, 2), usedMeasured ? "measured in this app" : "from token assumptions", false],
-    ["Value created per set", $(saved, 2), "people time + delay avoided, net of AI", true],
+    ["Buyer's savings per year", $(dealSave * sets), "counted in the deal, before fee", true],
+    ["GoComet fee at " + v.share + "%", $(fee * sets), $(fee / v.cntr, 2) + " per container", true],
+    ["GoComet margin after AI", num((fee - ai) / fee * 100, 1) + "%", "AI " + $(ai, 2) + " per set" + (usedMeasured ? " (measured)" : ""), false],
     ["AI cost as share of value", num(ai / (today - (cg2 + su2 + dl2)) * 100, 2) + "%", "the model is not the cost driver; review time is", false],
     ["CG hours freed / month", num(cgHrs, 0), "≈ " + num(cgHrs / 160, 1) + " full-time checkers", false],
     ["Document loop per shipment", num(cyc1, 0) + " h → " + num(cyc2, 1) + " h", "today → with Trilogy", false],
@@ -138,8 +147,8 @@ function calc() {
     `<tr><td><b>Supplier</b></td><td>Fewer fix rounds (${v.r1} → ${v.r2})</td><td class="n">${num(suHrs)} saved</td><td class="n">${$((su1 - su2) * M)}</td></tr>` +
     `<tr><td><b>CG / forwarder</b></td><td>Reads flags, not every field</td><td class="n">${num(cgHrs)} saved</td><td class="n">${$((cg1 - cg2) * M)}</td></tr>` +
     `<tr><td><b>Customer</b></td><td>Fewer shipments held for papers (${v.d1}% → ${v.d2}%)</td><td class="n">${num((v.d1 - v.d2) / 100 * M * v.delayDays * 24)} cargo-hours</td><td class="n">${$((dl1 - dl2) * M)}</td></tr>` +
-    `<tr><td><b>AI + hosting</b></td><td>${PRICES[v.model === "mix" ? "haiku" : v.model].name}${v.model === "mix" ? " / Sonnet 5.5" : ""}</td><td class="n">—</td><td class="n">−${$(ai * M)}</td></tr>` +
-    `<tr><td><b>Net</b></td><td></td><td class="n"><b>${num(cgHrs + suHrs)}</b> people-hours</td><td class="n"><b>${$(saved * M)}</b></td></tr>`;
+    `<tr><td><b>AI + hosting</b> (GoComet's cost)</td><td>${PRICES[v.model === "mix" ? "haiku" : v.model].name}${v.model === "mix" ? " / Sonnet 5.5" : ""}</td><td class="n">—</td><td class="n">${$(ai * M)}</td></tr>` +
+    `<tr><td><b>Total</b></td><td>${num(M)} sets / month from ${num(v.containers)} containers / year</td><td class="n"><b>${num(cgHrs + suHrs)}</b> people-hours</td><td class="n"><b>${$((today - (cg2 + su2 + dl2)) * M)}</b></td></tr>`;
   // speed
   document.getElementById("speed").innerHTML = `<tr><th></th><th style="text-align:right">Today</th><th style="text-align:right">With Trilogy</th></tr>` +
     `<tr><td>First response to the supplier</td><td class="n">${num(v.h1)} h</td><td class="n">${num(v.reply2)} min</td></tr>` +
@@ -154,13 +163,11 @@ function calc() {
     `<tr><td>Cost</td><td class="n">${$(readCost(pText, textIn, v.outTok), 4)}</td><td class="n">${$(readCost(pScan, scanIn, v.outTok), 4)}</td><td class="n">${$(ai - v.infra, 3)}</td></tr>` +
     `<tr><td>Per month (${num(M)} sets)</td><td></td><td></td><td class="n">${$((ai - v.infra) * M)}</td></tr>`;
   document.getElementById("tokennote").innerHTML = `Levers that cut token cost without touching accuracy: text documents read as text (not images); the instructions cached across calls; each file read once and reused, so a supplier's pre-check and the later CG check of the same files cost one read; rules and drafts are fixed code, no model. Sonnet for all would cost ${$(v.docs * ((1 - s) * readCost(PRICES.sonnet, textIn, v.outTok) + s * readCost(PRICES.sonnet, scanIn, v.outTok)), 3)} per first read; Haiku for all ${$(v.docs * ((1 - s) * readCost(PRICES.haiku, textIn, v.outTok) + s * readCost(PRICES.haiku, scanIn, v.outTok)), 3)}.`;
-  // pricing
-  const margin = (v.price - ai) / v.price;
-  document.getElementById("pricing").innerHTML = `<tr><th></th><th style="text-align:right">Per set</th><th style="text-align:right">Per month</th></tr>` +
-    `<tr><td>Price charged</td><td class="n">${$(v.price, 2)}</td><td class="n">${$(v.price * M)}</td></tr>` +
-    `<tr><td>AI + hosting cost</td><td class="n">${$(ai, 2)}</td><td class="n">${$(ai * M)}</td></tr>` +
-    `<tr><td>Gross margin</td><td class="n">${num(margin * 100, 0)}%</td><td class="n">${$((v.price - ai) * M)}</td></tr>` +
-    `<tr><td>Buyer's saving after price</td><td class="n">${$(today - (cg2 + su2 + dl2) - v.price, 2)}</td><td class="n">${$((today - (cg2 + su2 + dl2) - v.price) * M)}</td></tr>`;
+  // pricing ladder 1..8%
+  const yr = sets, ladder = [1, 2, 3, 4, 5, 6, 7, 8];
+  document.getElementById("pricing").innerHTML = `<tr><th>Gain share</th><th style="text-align:right">Fee / year</th><th style="text-align:right">Fee / container</th><th style="text-align:right">GoComet margin / year</th><th style="text-align:right">Margin %</th><th style="text-align:right">Buyer keeps / year</th></tr>` +
+    ladder.map((p) => { const f = dealSave * p / 100; return `<tr${p === v.share ? ' style="background:var(--teal-bg);font-weight:600"' : ""}><td>${p}%</td><td class="n">${$(f * yr)}</td><td class="n">${$(f / v.cntr, 2)}</td><td class="n">${$((f - ai) * yr)}</td><td class="n">${f > 0 ? num((f - ai) / f * 100, 1) + "%" : "—"}</td><td class="n">${$((dealSave - f) * yr)}</td></tr>`; }).join("");
+  document.getElementById("dealnote").innerHTML = `Savings counted: ${[v.countCG && "CG time", v.countSU && "supplier time", v.countDelay && "port delay"].filter(Boolean).join(", ") || "none"} = ${$(dealSave, 2)} per set, ${$(dealSave / v.cntr, 2)} per container. GoComet carries the AI and hosting cost (${$(ai * yr)} a year). Break-even gain share: ${num(ai / dealSave * 100, 2)}%.`;
 }
 fetch("/api/v/economics").then((r) => r.json()).then((m) => {
   const el = document.getElementById("measured");
