@@ -1,5 +1,7 @@
 # FreightMind — agentic assistant for logistics
 
+> **Part 2 (document verification agent):** see [PART2.md](PART2.md) · open `/verify.html`.
+
 A working MVP for the GoComet Agentic AI PM assignment (Part 1). The analytics agent takes a **freeform natural-language question**, uses **Claude to generate SQL**, runs it **read-only against a real SQLite database**, and returns a grounded answer with the exact query shown. Document extraction, reconciliation, the scan-for-similar delighter, governance, and workflows round out the harness.
 
 ## Architecture
