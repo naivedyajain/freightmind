@@ -90,9 +90,10 @@ async function callWithKeys(keys, payload, prefer) {
 async function callClaude(apiKey, payload, prefer) {
   let order = workingModel ? [workingModel, ...MODELS.filter((m) => m !== workingModel)] : MODELS;
   if (prefer === "fast") order = ["claude-haiku-5-5", ...order.filter((m) => m !== "claude-haiku-5-5")];
+  if (Array.isArray(prefer)) order = [...prefer, ...order.filter((m) => !prefer.includes(m))]; // explicit order (judge)
   let lastErr;
   for (const model of order) {
-    try { const out = await postMessages(apiKey, { ...payload, model }); if (prefer !== "fast") workingModel = model; lastModel = model; return out; }
+    try { const out = await postMessages(apiKey, { ...payload, model }); if (!prefer) workingModel = model; lastModel = model; return out; }
     catch (e) {
       lastErr = e;
       const modelProblem = e.type === "not_found_error" || /model/i.test(e.message || "");
@@ -232,6 +233,10 @@ app.post("/api/review", async (req, res) => {
   const rulesFailed = checks.some((c) => !c.pass);
   const apiKey = [process.env.ANTHROPIC_API_KEY, req.body.apiKey].filter(Boolean);
   const trigger = isMoney ? "money answer" : rulesFailed ? "a rule check failed" : null;
+  // The judge should not be the model that wrote the SQL: a model grading its own work shares its blind spots.
+  const sqlModel = req.body.sqlModel || workingModel;
+  const JUDGES = [process.env.JUDGE_MODEL, "claude-opus-5-5", "claude-sonnet-5-5", "claude-sonnet-4-5", "claude-haiku-5-5"].filter(Boolean);
+  const judgeOrder = JUDGES.filter((m) => m !== sqlModel);
   let review = null, reviewError = null;
   if (apiKey.length) {
     try {
@@ -247,12 +252,12 @@ app.post("/api/review", async (req, res) => {
         messages: [{ role: "user", content:
           "Question: " + question + "\n\nSQL:\n" + sql + "\n\nColumns: " + cols.join(", ") +
           "\nRow count: " + (rowCount != null ? rowCount : rows.length) + "\nFirst rows: " + JSON.stringify(rows.slice(0, 10)) }],
-      });
+      }, judgeOrder);
       review = parseExtraction(text);
       if (!trigger) delete review.verdict; // judge verdict only where it matters; explanation always
     } catch (e) { reviewError = e.message; }
   }
-  res.json({ checks, review, judged: !!(review && review.verdict), trigger, reviewError, model: lastModel });
+  res.json({ checks, review, judged: !!(review && review.verdict), trigger, reviewError, model: lastModel, sqlModel, independent: !!lastModel && lastModel !== sqlModel });
 });
 
 // $ at risk: every invoice charge billed above its quote, across all invoices (deterministic)

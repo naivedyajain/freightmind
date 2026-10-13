@@ -509,7 +509,7 @@ function ReviewBox({ rv }) {
     React.createElement("div", { className: "chks" }, (rv.checks || []).map((c, i) => React.createElement("span", { key: i, className: "chk" + (c.pass ? "" : " f"), title: c.detail }, (c.pass ? "✓ " : "⚠ ") + c.name))),
     React.createElement("div", { className: "small" },
       rv.reviewError ? "Explanation and judge unavailable (" + rv.reviewError + "). Rule checks still apply."
-        : (rv.judged ? "Judge ran because: " + rv.trigger + ". " : "No verdict needed (not a money answer). ") + "Explanation by " + (rv.model || "model") + "."));
+        : (rv.judged ? "Judge ran because: " + rv.trigger + ". " : "No verdict needed (not a money answer). ") + "SQL by " + (rv.sqlModel || "model") + ", reviewed by " + (rv.model || "model") + (rv.independent ? " (a different model, so it is not grading its own work)." : ".")));
 }
 function disputeText(d) {
   const ref = d.items.map(i => i.invoice_id).filter((v, i, a) => a.indexOf(v) === i);
@@ -703,7 +703,7 @@ function App() {
         const aid = Date.now() + Math.random();
         if (j.answerable) {
           fetch(API + "/api/review", { method: "POST", headers: { "content-type": "application/json" },
-            body: JSON.stringify({ question: q, sql: j.sql, cols: j.cols, rows: (j.rows || []).slice(0, 25), rowCount: j.rowCount, apiKey: key }) })
+            body: JSON.stringify({ question: q, sql: j.sql, cols: j.cols, rows: (j.rows || []).slice(0, 25), rowCount: j.rowCount, apiKey: key, sqlModel: j.model }) })
             .then(r => r.json())
             .then(rv => { addCost(parseFloat(costOf(model, 900, 200).toFixed(4))); setThread(t => t.map(x => x.id === aid ? { ...x, review: rv } : x)); })
             .catch(e => setThread(t => t.map(x => x.id === aid ? { ...x, review: { checks: [], reviewError: e.message } } : x)));
