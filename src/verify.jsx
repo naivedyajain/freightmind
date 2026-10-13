@@ -58,9 +58,32 @@ function App() {
 }
 
 function MailPill({ mail, onPoll }) {
-  if (!mail || !mail.configured) return <span className="pill muted" title="Set MAIL_USER and MAIL_PASS on the server to read a real inbox over IMAP">Mailbox not connected</span>;
-  return <button className={"pill " + (mail.lastError ? "bad" : "ok")} onClick={onPoll} title={mail.lastError || "Polling every " + mail.every_s + "s. Click to check now."}>
-    ● {mail.user} {mail.lastPoll ? "· checked " + ago(mail.lastPoll) : "· connecting"}</button>;
+  const [open, setOpen] = useState(false);
+  const pill = !mail || !mail.configured
+    ? <button className="pill muted" onClick={() => setOpen(true)}>Connect mailbox</button>
+    : <span className="pillwrap"><button className={"pill " + (mail.lastError ? "bad" : "ok")} onClick={onPoll} title={mail.lastError ? "Gmail said: " + mail.lastError : "Polling every " + mail.every_s + "s. Click to check now."}>
+        ● {mail.user} {mail.lastError ? "· error" : mail.lastPoll ? "· checked " + ago(mail.lastPoll) : "· connecting"}</button>
+        <button className="pill muted" onClick={() => setOpen(true)} title="Change mailbox">⚙</button></span>;
+  return <>{pill}{open && <MailConnect mail={mail} onClose={() => setOpen(false)} />}</>;
+}
+function MailConnect({ mail, onClose }) {
+  const [user, setUser] = useState((mail && mail.user) || "");
+  const [pass, setPass] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [r, setR] = useState(null);
+  const go = () => { setBusy(true); setR(null); post("/mail/connect", { user, pass }).then((x) => { setBusy(false); setR(x); if (x.ok) setTimeout(onClose, 1500); }); };
+  return (
+    <div className="drawer-bg" onClick={onClose}><div className="modal" onClick={(e) => e.stopPropagation()}>
+      <h3>Connect the CG mailbox</h3>
+      <p className="sub">The agent reads new emails with attachments over IMAP and replies in the same thread over SMTP, only when you click Send. The password is kept in server memory only: not saved, and cleared on restart.</p>
+      <label>Gmail address<input value={user} onChange={(e) => setUser(e.target.value)} placeholder="cg-team@gmail.com" /></label>
+      <label>App password (16 characters; spaces are fine)<input type="password" value={pass} onChange={(e) => setPass(e.target.value)} /></label>
+      {r && (r.ok ? <div className="rhint">Connected to {r.user}. {r.inbox_messages} message(s) in the inbox. New emails with attachments are picked up every 30 seconds.</div>
+        : <div className="err"><b>Gmail said:</b> {r.error}{r.hint && <><br /><b>Fix:</b> {r.hint}</>}</div>)}
+      {mail && mail.lastError && !r && <div className="err"><b>Last error:</b> {mail.lastError}{mail.hint && <><br /><b>Fix:</b> {mail.hint}</>}</div>}
+      <div className="row2"><button className="btn ghost" onClick={onClose}>Close</button>{mail && mail.configured && <button className="btn ghost" onClick={() => post("/mail/disconnect").then(onClose)}>Disconnect</button>}
+        <button className="btn primary" disabled={!user || !pass || busy} onClick={go}>{busy ? "Testing login…" : "Connect"}</button></div>
+    </div></div>);
 }
 
 // ======================= CG =======================
@@ -241,7 +264,7 @@ function Reply({ d, id, onSent, say }) {
   useEffect(() => setM(d.draft), [d.draft && d.draft.body]);
   const sent = d.packet.status === "replied";
   const send = () => { if (!confirm("Send this reply to " + m.to + "?")) return; setBusy(true);
-    post("/packet/" + id + "/send", m).then((r) => { setBusy(false); say(r.error ? r.error : r.sent ? "Sent in the same email thread" : r.reason); onSent(); }); };
+    post("/packet/" + id + "/send", m).then((r) => { setBusy(false); say(r.error ? r.error : r.sent ? "Sent in the same email thread" : r.drafted ? "Saved as a Gmail draft in the thread: send it from Gmail" : r.reason); onSent(); }); };
   return (
     <div className="reply">
       <div className="rhint">{m.kind === "amendment" ? "Amendment request" : "Approval"} drafted by the agent from the checks above. Every line traces to a check. <b>The agent never sends on its own.</b></div>

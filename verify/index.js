@@ -80,6 +80,8 @@ module.exports = function mount(app, { callWithKeys }) {
 
   r.get("/mail", (req, res) => res.json(mail.status()));
   r.post("/mail/poll", async (req, res) => res.json(await mail.pollOnce(agent.createPacket)));
+  r.post("/mail/connect", async (req, res) => res.json(await mail.connect(req.body.user, req.body.pass, agent.createPacket)));
+  r.post("/mail/disconnect", (req, res) => { mail.disconnect(); res.json({ ok: true }); });
 
   app.use("/api/v", r);
   mail.start(agent.createPacket);
