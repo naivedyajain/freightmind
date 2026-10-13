@@ -8,7 +8,9 @@ const { normParty } = require("./engine");
 module.exports = function mount(app, { callWithKeys }) {
   // Model key: one set in the app (memory only) wins over the server env var, then any key the browser sends.
   let appKey = null, browserKey = null;
-  agent.setLLM((payload) => callWithKeys([appKey, process.env.ANTHROPIC_API_KEY, browserKey].filter(Boolean), payload));
+  // reading model: "sonnet" (default) or "haiku" (20x cheaper per token); a cost/accuracy lever the economics page shows
+  let reader = process.env.READER_MODEL || "sonnet";
+  agent.setLLM((payload) => callWithKeys([appKey, process.env.ANTHROPIC_API_KEY, browserKey].filter(Boolean), payload, reader === "haiku" ? "fast" : null));
   const r = express.Router();
   let baseUrl = process.env.PUBLIC_URL || null; // for links inside emails
   r.use((req, res, next) => { const k = req.get("x-api-key"); if (k) browserKey = k; if (!process.env.PUBLIC_URL && req.get("host")) baseUrl = (req.get("x-forwarded-proto") || req.protocol) + "://" + req.get("host"); next(); });
@@ -128,7 +130,9 @@ module.exports = function mount(app, { callWithKeys }) {
   r.post("/mail/poll", async (req, res) => res.json(await mail.pollOnce(hooks)));
   r.post("/mail/connect", async (req, res) => res.json(await mail.connect(req.body.user, req.body.pass, hooks)));
   // model key: test with a tiny call before accepting it
-  r.get("/model", (req, res) => res.json({ app_key: !!appKey, env_key: !!process.env.ANTHROPIC_API_KEY, browser_key: !!browserKey }));
+  r.get("/economics", (req, res) => res.json({ ...require("./usage").summary(), reader }));
+  r.post("/reader", (req, res) => { reader = req.body.reader === "haiku" ? "haiku" : "sonnet"; res.json({ reader }); });
+  r.get("/model", (req, res) => res.json({ reader, app_key: !!appKey, env_key: !!process.env.ANTHROPIC_API_KEY, browser_key: !!browserKey }));
   r.post("/model", async (req, res) => {
     const k = String((req.body && req.body.key) || "").replace(/[\s"']/g, "");
     if (!k) { appKey = null; return res.json({ ok: true, cleared: true }); }

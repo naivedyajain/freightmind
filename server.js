@@ -77,6 +77,7 @@ function postMessages(apiKey, payload) {
         let j; try { j = JSON.parse(data); } catch (e) { return reject(new Error("Bad API response (HTTP " + res.statusCode + ")")); }
         if (j.error) { const err = new Error(j.error.message || "API error"); err.type = j.error.type; err.status = res.statusCode; return reject(err); }
         // join every text block (newer models can return more than one block, or a non-text block first)
+        try { if (global.__fmUsage && j.usage) global.__fmUsage(payload.model, j.usage); } catch (_) {} // measured cost per call
         const text = (j.content || []).filter((b) => b && b.type === "text").map((b) => b.text).join("\n").trim();
         if (!text) { const err = new Error("Model returned no text (stop: " + (j.stop_reason || "unknown") + ")"); err.status = 502; return reject(err); }
         resolve(text);

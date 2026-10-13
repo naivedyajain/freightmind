@@ -2,6 +2,7 @@
 const { db, J } = require("./store");
 const { extract, expand, mimeOf } = require("./extract");
 const { verify, docLabel, normParty } = require("./engine");
+const usage = require("./usage");
 
 let callLLM = null, onReady = null;
 function setLLM(fn) { callLLM = fn; }
@@ -17,7 +18,7 @@ function createPacket(p) {
     body: (p.body || "").slice(0, 4000), received_at: p.received_at || new Date().toISOString(),
     progress: JSON.stringify([{ step: "Email received", at: new Date().toISOString(), detail: (p.files || []).length + " attachment(s)" }]) });
   const id = r.lastInsertRowid;
-  process_(id, p.files || []).catch((e) => { db.prepare("UPDATE packets SET status='error', error=? WHERE id=?").run(e.message, id); });
+  usage.als.run({ packet: id }, () => process_(id, p.files || [])).catch((e) => { db.prepare("UPDATE packets SET status='error', error=? WHERE id=?").run(e.message, id); });
   return id;
 }
 const step = (id, s, detail) => {
@@ -60,7 +61,8 @@ function systemFailure(id) {
   return true;
 }
 // re-read only the documents that failed (bytes are stored), then verify again
-async function retry(id) {
+async function retry(id) { return usage.als.run({ packet: id }, () => retry_(id)); }
+async function retry_(id) {
   const failed = db.prepare("SELECT id, filename, bytes FROM documents WHERE packet_id=? AND status='error' AND bytes IS NOT NULL").all(id);
   db.prepare("UPDATE packets SET status='reading', error=NULL WHERE id=?").run(id);
   step(id, "Retrying", failed.length + " document(s)");
@@ -145,7 +147,7 @@ function getPacket(id, level = 0) {
       effective: d && d.cg_status === "accepted" ? "accepted" : c.status };
   });
   const enrich = enrichment(p, docs, checks, level);
-  return { packet: { ...p, progress: J(p.progress_json, []), summary: tally(checks.map((c) => ({ status: c.effective === "accepted" ? "match" : c.status }))) },
+  return { usage: usage.forPacket(id), packet: { ...p, progress: J(p.progress_json, []), summary: tally(checks.map((c) => ({ status: c.effective === "accepted" ? "match" : c.status }))) },
     docs, checks, enrichment: enrich, draft: J(p.draft_json) || composeDraft(p, docs, checks, enrich), learned: learnedFromAmendments(docs) };
 }
 

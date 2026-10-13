@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>FreightMind · Unit economics</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+:root{--bg:#f4f6f8;--card:#fff;--ink:#16222d;--muted:#5b6b7a;--line:#dde4ea;--teal:#0b6650;--teal-bg:#e5f4ef;--red:#b23a2e;--red-bg:#fbe7e4;--amb:#8a5a0a;--amb-bg:#fdf1dc;--purp:#5b3fa8;--purp-bg:#efe9fb;--head:#0f2b24;--mono:"JetBrains Mono",ui-monospace,monospace;--c1:#2f6fb0;--c2:#c27b2a;--c3:#b23a2e;--c4:#0b6650}
+*{box-sizing:border-box}body{margin:0;font-family:Inter,system-ui,sans-serif;background:var(--bg);color:var(--ink);font-size:14px}
+.top{display:flex;align-items:center;gap:14px;padding:10px 18px;background:var(--head);color:#fff;flex-wrap:wrap}.top b{font-size:16px}.top span{opacity:.75;font-size:12.5px}.top a{color:#9fe0cb;font-size:13px;text-decoration:none;margin-left:auto}
+.wrap{display:grid;grid-template-columns:360px 1fr;gap:16px;padding:16px;max-width:1400px;margin:0 auto}
+@media(max-width:900px){.wrap{grid-template-columns:1fr}}
+.panel{background:#fff;border:1px solid var(--line);border-radius:12px;padding:14px}
+.inputs{display:flex;flex-direction:column;gap:12px;align-self:start;position:sticky;top:12px;max-height:calc(100vh - 24px);overflow-y:auto}
+fieldset{border:0;padding:0;margin:0}legend{font-weight:700;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--teal);margin-bottom:6px}
+.f{display:grid;grid-template-columns:1fr 92px;gap:6px;align-items:center;margin:5px 0;font-size:12.5px}.f input,.f select{width:100%;border:1px solid var(--line);border-radius:7px;padding:5px 7px;font:inherit;font-size:12.5px;text-align:right}.f select{text-align:left}
+.f small{display:block;color:var(--muted);font-size:11px}
+.measured{background:var(--purp-bg);border-radius:10px;padding:10px;font-size:12.5px}.measured b{font-family:var(--mono)}.measured button{margin-top:6px}
+.btn{border-radius:8px;padding:6px 11px;border:1px solid var(--line);background:#fff;font-weight:600;font-size:12.5px;cursor:pointer}.btn.primary{background:var(--teal);border-color:var(--teal);color:#fff}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px}
+.kpi{background:#fff;border:1px solid var(--line);border-radius:12px;padding:12px}.kpi span{display:block;font-size:11.5px;color:var(--muted)}.kpi b{display:block;font-size:24px;margin:2px 0}.kpi i{font-style:normal;font-size:11.5px;color:var(--muted)}
+.kpi.hero{background:var(--teal-bg);border-color:#9fd6c3}.kpi.hero b{color:var(--teal)}
+h2{margin:0 0 4px;font-size:16px}h3{margin:16px 0 6px;font-size:14px}.sub{color:var(--muted);font-size:12.5px}
+.out{display:flex;flex-direction:column;gap:14px}
+.bars{display:flex;flex-direction:column;gap:10px;margin-top:8px}.barrow{display:grid;grid-template-columns:120px 1fr 90px;gap:10px;align-items:center;font-size:12.5px}
+.bar{display:flex;height:26px;border-radius:6px;overflow:hidden;background:#eef1f4}.bar div{height:100%}.barrow b{font-family:var(--mono);text-align:right}
+.legend{display:flex;gap:14px;flex-wrap:wrap;font-size:11.5px;color:var(--muted);margin-top:6px}.legend span::before{content:"";display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px;background:var(--c)}
+table{width:100%;border-collapse:collapse;font-size:12.5px}th{text-align:left;background:#f3f6f8;padding:7px 8px;font-weight:600}td{padding:7px 8px;border-top:1px solid var(--line)}td.n{text-align:right;font-family:var(--mono)}
+.note{font-size:11.5px;color:var(--muted);line-height:1.5}
+.tag{font-size:10.5px;font-weight:700;border-radius:5px;padding:1px 6px}.tag.m{background:var(--purp-bg);color:var(--purp)}.tag.a{background:var(--amb-bg);color:var(--amb)}
+</style>
+</head>
+<body>
+<header class="top"><b>FreightMind</b><span>Unit economics · cost, time and value per document set</span><a href="/verify.html">← Document verification</a></header>
+<div class="wrap">
+  <aside class="panel inputs" id="inputs"></aside>
+  <main class="out">
+    <div class="kpis" id="kpis"></div>
+    <section class="panel"><h2>Cost of one document set: today vs with Trilogy</h2><p class="sub">People's time and delay cost dominate. The model's cost is the thin sliver.</p><div class="bars" id="bars"></div>
+      <div class="legend"><span style="--c:var(--c1)">CG time</span><span style="--c:var(--c2)">Supplier time</span><span style="--c:var(--c3)">Delay at port</span><span style="--c:var(--c4)">AI reading + hosting</span></div></section>
+    <section class="panel"><h2>Outcome per party, per month</h2><table id="parties"></table></section>
+    <section class="panel"><h2>Speed: one shipment's document loop</h2><table id="speed"></table></section>
+    <section class="panel"><h2>Where the AI money goes</h2><table id="tokens"></table><p class="note" id="tokennote"></p></section>
+    <section class="panel"><h2>Price and margin</h2><table id="pricing"></table><p class="note">Pricing is a hypothesis to test: CG or the customer pays per set checked; suppliers pre-check free.</p></section>
+    <p class="note">Model prices: platform.claude.com/docs/en/about-claude/pricing (USD per million tokens, standard tier, checked Oct 2026). Today's process numbers are assumptions unless marked <span class="tag m">measured</span>; the brief states 2–4 amendment rounds per shipment and 4–24 hours per round. Edit any input.</p>
+  </main>
+</div>
+<script>
+const PRICES = { sonnet: { in: 2, out: 10, cr: 0.1, name: "Sonnet 5.5" }, haiku: { in: 0.1, out: 0.5, cr: 0.01, name: "Haiku 5.5" }, opus: { in: 4, out: 20, cr: 0.2, name: "Opus 5.5" } };
+const FIELDS = [
+  ["Volume and documents", [
+    ["sets", "Document sets per month", 2000, "one per shipment"],
+    ["docs", "Documents per set", 8, "invoice, PL, BL, COO, COAs…"],
+    ["scanShare", "Share that are scans (%)", 20, "read by vision"],
+    ["pages", "Pages per scanned document", 1.5, ""],
+  ]],
+  ["AI reading", [
+    ["model", "Reading model", "mix", "", [["mix", "Haiku for text, Sonnet for scans"], ["sonnet", "Sonnet 5.5 for all"], ["haiku", "Haiku 5.5 for all"], ["opus", "Opus 5.5 for all"]]],
+    ["promptTok", "Instruction tokens per call", 1300, "same on every call"],
+    ["textTok", "Document text tokens", 3500, "first 4 pages of text"],
+    ["imgTok", "Tokens per scanned page", 1600, "image input, approx."],
+    ["outTok", "Output tokens per document", 1100, "extracted fields as JSON"],
+    ["cache", "Prompt caching", 1, "", [[1, "On"], [0, "Off"]]],
+    ["changedShare", "Share re-read on resubmission (%)", 30, "unchanged files: free (hash cache)"],
+    ["infra", "Hosting + storage per set ($)", 0.01, ""],
+  ]],
+  ["Today", [
+    ["r1", "Amendment rounds per shipment", 2.5, "brief: 2–4"],
+    ["cgMin1", "CG minutes per round", 35, "open, read, compare, type"],
+    ["suMin", "Supplier minutes per fix round", 25, ""],
+    ["h1", "Hours per round (wait + check)", 12, "brief: 4–24"],
+  ]],
+  ["With Trilogy", [
+    ["r2", "Rounds per shipment", 1.3, "pre-check fixes most before sending"],
+    ["cgMin2", "CG minutes per round (review flags)", 8, ""],
+    ["reply2", "Minutes to CG reply", 20, "agent reads in ~2 min"],
+    ["fixH", "Supplier fix turnaround (hours)", 4, ""],
+  ]],
+  ["People and delay costs", [
+    ["cgRate", "CG cost per hour ($, loaded)", 12, "edit for your market"],
+    ["suRate", "Supplier cost per hour ($, loaded)", 8, ""],
+    ["d1", "Shipments delayed by documents today (%)", 8, ""],
+    ["d2", "…with Trilogy (%)", 2, ""],
+    ["delayDays", "Days of delay when it happens", 2, ""],
+    ["cntr", "Containers per shipment", 2, ""],
+    ["dd", "Demurrage + detention per container-day ($)", 150, ""],
+  ]],
+  ["Price", [["price", "Price per set charged ($)", 2.5, "hypothesis"]]],
+];
+const v = {}; let measured = null;
+const box = document.getElementById("inputs");
+box.innerHTML = '<div class="measured" id="measured">Checking measured cost from this app…</div>' + FIELDS.map(([g, fs]) => `<fieldset><legend>${g}</legend>${fs.map(([k, l, d, h, opts]) => {
+  v[k] = d; const ctl = opts ? `<select id="${k}">${opts.map(([ov, ol]) => `<option value="${ov}" ${String(ov) === String(d) ? "selected" : ""}>${ol}</option>`).join("")}</select>` : `<input id="${k}" type="number" step="any" value="${d}">`;
+  return `<label class="f"><span>${l}${h ? `<small>${h}</small>` : ""}</span>${ctl}</label>`; }).join("")}</fieldset>`).join("");
+box.addEventListener("input", (e) => { const t = e.target; if (!t.id) return; v[t.id] = t.tagName === "SELECT" ? (isNaN(+t.value) ? t.value : +t.value) : +t.value; calc(); });
+
+const $ = (n, d = 0) => "$" + Number(n).toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
+const num = (n, d = 0) => Number(n).toLocaleString("en-US", { maximumFractionDigits: d });
+function readCost(p, inTok, outTok) {
+  const prompt = v.promptTok, rest = inTok - prompt;
+  const promptCost = v.cache ? (prompt * 0.1 * p.in + prompt * 0.9 * p.cr) : prompt * p.in; // ~1 in 10 calls writes the cache
+  return (promptCost + rest * p.in + outTok * p.out) / 1e6;
+}
+function calc() {
+  const textIn = v.promptTok + v.textTok, scanIn = v.promptTok + v.imgTok * v.pages;
+  const pText = PRICES[v.model === "mix" ? "haiku" : v.model], pScan = PRICES[v.model === "mix" ? "sonnet" : v.model];
+  const s = v.scanShare / 100;
+  const perDoc = (1 - s) * readCost(pText, textIn, v.outTok) + s * readCost(pScan, scanIn, v.outTok);
+  const firstRead = v.docs * perDoc;
+  let ai = firstRead * (1 + Math.max(0, v.r2 - 1) * v.changedShare / 100);
+  const usedMeasured = measured && measured.use;
+  if (usedMeasured) ai = measured.per_set_usd * (1 + Math.max(0, v.r2 - 1) * v.changedShare / 100);
+  ai += v.infra;
+  // people and delay, per set
+  const cg1 = v.r1 * v.cgMin1 / 60 * v.cgRate, su1 = Math.max(0, v.r1 - 1) * v.suMin / 60 * v.suRate, dl1 = v.d1 / 100 * v.delayDays * v.cntr * v.dd;
+  const cg2 = v.r2 * v.cgMin2 / 60 * v.cgRate, su2 = Math.max(0, v.r2 - 1) * v.suMin / 60 * v.suRate, dl2 = v.d2 / 100 * v.delayDays * v.cntr * v.dd;
+  const today = cg1 + su1 + dl1, withT = cg2 + su2 + dl2 + ai, saved = today - withT;
+  const M = v.sets;
+  const cgHrs = (v.r1 * v.cgMin1 - v.r2 * v.cgMin2) / 60 * M, suHrs = (Math.max(0, v.r1 - 1) - Math.max(0, v.r2 - 1)) * v.suMin / 60 * M;
+  const cyc1 = v.r1 * v.h1, cyc2 = v.reply2 / 60 + Math.max(0, v.r2 - 1) * (v.fixH + v.reply2 / 60);
+  // KPIs
+  document.getElementById("kpis").innerHTML = [
+    ["AI cost per set", $(ai, 2), usedMeasured ? "measured in this app" : "from token assumptions", false],
+    ["Value created per set", $(saved, 2), "people time + delay avoided, net of AI", true],
+    ["AI cost as share of value", num(ai / (today - (cg2 + su2 + dl2)) * 100, 2) + "%", "the model is not the cost driver; review time is", false],
+    ["CG hours freed / month", num(cgHrs, 0), "≈ " + num(cgHrs / 160, 1) + " full-time checkers", false],
+    ["Document loop per shipment", num(cyc1, 0) + " h → " + num(cyc2, 1) + " h", "today → with Trilogy", false],
+  ].map(([l, b, i, h]) => `<div class="kpi${h ? " hero" : ""}"><span>${l}</span><b>${b}</b><i>${i}</i></div>`).join("");
+  // bars
+  const max = Math.max(today, withT);
+  const seg = (val, c) => `<div style="width:${val / max * 100}%;background:var(${c})" title="${$(val, 2)}"></div>`;
+  document.getElementById("bars").innerHTML =
+    `<div class="barrow"><span>Today</span><div class="bar">${seg(cg1, "--c1")}${seg(su1, "--c2")}${seg(dl1, "--c3")}</div><b>${$(today, 2)}</b></div>` +
+    `<div class="barrow"><span>With Trilogy</span><div class="bar">${seg(cg2, "--c1")}${seg(su2, "--c2")}${seg(dl2, "--c3")}${seg(ai, "--c4")}</div><b>${$(withT, 2)}</b></div>`;
+  // parties
+  document.getElementById("parties").innerHTML = `<tr><th>Party</th><th>Outcome</th><th style="text-align:right">Hours / month</th><th style="text-align:right">$ / month</th></tr>` +
+    `<tr><td><b>Supplier</b></td><td>Fewer fix rounds (${v.r1} → ${v.r2})</td><td class="n">${num(suHrs)} saved</td><td class="n">${$((su1 - su2) * M)}</td></tr>` +
+    `<tr><td><b>CG / forwarder</b></td><td>Reads flags, not every field</td><td class="n">${num(cgHrs)} saved</td><td class="n">${$((cg1 - cg2) * M)}</td></tr>` +
+    `<tr><td><b>Customer</b></td><td>Fewer shipments held for papers (${v.d1}% → ${v.d2}%)</td><td class="n">${num((v.d1 - v.d2) / 100 * M * v.delayDays * 24)} cargo-hours</td><td class="n">${$((dl1 - dl2) * M)}</td></tr>` +
+    `<tr><td><b>AI + hosting</b></td><td>${PRICES[v.model === "mix" ? "haiku" : v.model].name}${v.model === "mix" ? " / Sonnet 5.5" : ""}</td><td class="n">—</td><td class="n">−${$(ai * M)}</td></tr>` +
+    `<tr><td><b>Net</b></td><td></td><td class="n"><b>${num(cgHrs + suHrs)}</b> people-hours</td><td class="n"><b>${$(saved * M)}</b></td></tr>`;
+  // speed
+  document.getElementById("speed").innerHTML = `<tr><th></th><th style="text-align:right">Today</th><th style="text-align:right">With Trilogy</th></tr>` +
+    `<tr><td>First response to the supplier</td><td class="n">${num(v.h1)} h</td><td class="n">${num(v.reply2)} min</td></tr>` +
+    `<tr><td>Rounds per shipment</td><td class="n">${v.r1}</td><td class="n">${v.r2}</td></tr>` +
+    `<tr><td>Whole document loop</td><td class="n">${num(cyc1, 1)} h</td><td class="n">${num(cyc2, 1)} h</td></tr>` +
+    `<tr><td>Days earlier the set is clean</td><td class="n" colspan="2">${num((cyc1 - cyc2) / 24, 1)} days</td></tr>`;
+  // tokens
+  const calls = v.docs * (1 + Math.max(0, v.r2 - 1) * v.changedShare / 100);
+  document.getElementById("tokens").innerHTML = `<tr><th></th><th style="text-align:right">Per text document</th><th style="text-align:right">Per scanned document</th><th style="text-align:right">Per set</th></tr>` +
+    `<tr><td>Input tokens</td><td class="n">${num(textIn)}</td><td class="n">${num(scanIn)}</td><td class="n">${num(calls * ((1 - s) * textIn + s * scanIn))}</td></tr>` +
+    `<tr><td>Output tokens</td><td class="n">${num(v.outTok)}</td><td class="n">${num(v.outTok)}</td><td class="n">${num(calls * v.outTok)}</td></tr>` +
+    `<tr><td>Cost</td><td class="n">${$(readCost(pText, textIn, v.outTok), 4)}</td><td class="n">${$(readCost(pScan, scanIn, v.outTok), 4)}</td><td class="n">${$(ai - v.infra, 3)}</td></tr>` +
+    `<tr><td>Per month (${num(M)} sets)</td><td></td><td></td><td class="n">${$((ai - v.infra) * M)}</td></tr>`;
+  document.getElementById("tokennote").innerHTML = `Levers that cut token cost without touching accuracy: text documents read as text (not images); the instructions cached across calls; each file read once and reused, so a supplier's pre-check and the later CG check of the same files cost one read; rules and drafts are fixed code, no model. Sonnet for all would cost ${$(v.docs * ((1 - s) * readCost(PRICES.sonnet, textIn, v.outTok) + s * readCost(PRICES.sonnet, scanIn, v.outTok)), 3)} per first read; Haiku for all ${$(v.docs * ((1 - s) * readCost(PRICES.haiku, textIn, v.outTok) + s * readCost(PRICES.haiku, scanIn, v.outTok)), 3)}.`;
+  // pricing
+  const margin = (v.price - ai) / v.price;
+  document.getElementById("pricing").innerHTML = `<tr><th></th><th style="text-align:right">Per set</th><th style="text-align:right">Per month</th></tr>` +
+    `<tr><td>Price charged</td><td class="n">${$(v.price, 2)}</td><td class="n">${$(v.price * M)}</td></tr>` +
+    `<tr><td>AI + hosting cost</td><td class="n">${$(ai, 2)}</td><td class="n">${$(ai * M)}</td></tr>` +
+    `<tr><td>Gross margin</td><td class="n">${num(margin * 100, 0)}%</td><td class="n">${$((v.price - ai) * M)}</td></tr>` +
+    `<tr><td>Buyer's saving after price</td><td class="n">${$(today - (cg2 + su2 + dl2) - v.price, 2)}</td><td class="n">${$((today - (cg2 + su2 + dl2) - v.price) * M)}</td></tr>`;
+}
+fetch("/api/v/economics").then((r) => r.json()).then((m) => {
+  const el = document.getElementById("measured");
+  if (!m.sets) { el.innerHTML = 'No sets checked yet in this app. Cost below comes from token assumptions; process one and come back for the <span class="tag m">measured</span> figure.'; return; }
+  measured = { ...m, use: false };
+  el.innerHTML = `<span class="tag m">measured</span> <b>${m.sets}</b> set(s) · <b>${m.calls}</b> model calls · avg <b>${num(m.per_call_in)}</b> in / <b>${num(m.per_call_out)}</b> out tokens per call · <b>$${m.per_set_usd.toFixed(3)}</b> per set (reading model: ${m.reader}).<br><button class="btn primary" id="usem">Use measured cost</button>`;
+  document.getElementById("usem").onclick = () => { measured.use = !measured.use; document.getElementById("usem").textContent = measured.use ? "Use assumptions instead" : "Use measured cost"; calc(); };
+}).catch(() => { document.getElementById("measured").textContent = "Measured cost unavailable; using assumptions."; });
+calc();
+</script>
+</body>
+</html>

@@ -68,7 +68,8 @@ async function extract(f, callLLM) {
   if (t.mode === "text") content = [{ type: "text", text: "File: " + f.filename + "\n\n" + t.text.slice(0, 16000) }];
   else if (t.mime === "application/pdf") content = [{ type: "document", source: { type: "base64", media_type: "application/pdf", data: f.bytes.toString("base64") } }, { type: "text", text: "File: " + f.filename }];
   else content = [{ type: "image", source: { type: "base64", media_type: t.mime, data: f.bytes.toString("base64") } }, { type: "text", text: "File: " + f.filename }];
-  const raw = await callLLM({ max_tokens: 4000, system: prompt(), messages: [{ role: "user", content }] });
+  // the instructions are identical on every call: marked cacheable so repeated calls pay the cache-read price
+  const raw = await callLLM({ max_tokens: 4000, system: [{ type: "text", text: prompt(), cache_control: { type: "ephemeral" } }], messages: [{ role: "user", content }] });
   const out = parseJSON(raw);
   const res = { doc_type: out.doc_type || "other", fields: out.fields || {}, confidence: flatConf(out.confidence || {}), unreadable: out.unreadable || [], extractor: t.mode === "text" ? "text + model" : "vision", pages: t.pages, mime: t.mime };
   for (const k of res.unreadable) res.confidence[k] = Math.min(res.confidence[k] ?? 0.3, 0.3); // unreadable can never look confident

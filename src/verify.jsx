@@ -42,6 +42,7 @@ function App() {
         </nav>
         <div className="right">
           <MailPill mail={state.mail} onPoll={() => post("/mail/poll").then((r) => { say(r.skipped ? "Mailbox not connected" : r.error ? "Mailbox error: " + r.error : r.fetched + " new email(s)"); refresh(); })} />
+          <a className="link" href="/economics.html" title="Cost, time and value per document set">Economics ↗</a>
           <a className="link" href="/" title="Part 1: ask questions over all of this data">Ask the data ↗</a>
         </div>
       </header>
@@ -92,6 +93,10 @@ function ModelKey() {
       <label>Anthropic API key<input type="password" value={k} onChange={(e) => setK(e.target.value)} placeholder="sk-ant-…" /></label>
       <div className="row2"><button className="btn primary" disabled={!k || busy} onClick={save}>{busy ? "Testing…" : "Save and test"}</button></div>
       {r && (r.ok ? <div className="rhint">Key works. Use Retry on any set that stopped.</div> : <div className="err"><b>Key rejected:</b> {r.error}</div>)}
+      {st && <label className="f2">Reading model
+        <select value={st.reader} onChange={(e) => post("/reader", { reader: e.target.value }).then(() => get("/model").then(setSt))}>
+          <option value="sonnet">Sonnet 5.5 · $2 / $10 per M tokens</option><option value="haiku">Haiku 5.5 · $0.10 / $0.50 per M tokens</option></select>
+        <span className="sub">Cost per set is measured either way: see Economics.</span></label>}
     </details>);
 }
 function Relay({ mail }) {
@@ -248,7 +253,7 @@ function Result({ d, level, onFocus }) {
         <div className="big bad"><b>{s.mismatch || 0}</b><span>to fix</span></div>
         <div className="big warn"><b>{s.uncertain || 0}</b><span>to decide</span></div>
         <div className="big ok"><b>{s.match || 0}</b><span>matched</span></div>
-        <div className="verdict">{(s.mismatch || s.uncertain) ? <>The agent drafted an <b>amendment request</b>. Nothing is approved while a field is uncertain.</> : <>Everything matched. The agent drafted an <b>approval</b>.</>}<br /><span className="sub">{d.docs.filter((x) => x.status === "read").length} documents · {cs.length} checks · reading confidence shown per field</span></div>
+        <div className="verdict">{(s.mismatch || s.uncertain) ? <>The agent drafted an <b>amendment request</b>. Nothing is approved while a field is uncertain.</> : <>Everything matched. The agent drafted an <b>approval</b>.</>}<br /><span className="sub">{d.docs.filter((x) => x.status === "read").length} documents · {cs.length} checks · reading confidence shown per field{d.usage && d.usage.calls ? " · read for $" + d.usage.usd.toFixed(3) + " (" + d.usage.calls + " model calls)" : ""}</span></div>
       </div>
       {level >= 1 && <Enrich e={e} level={level} />}
       {groups.map(([k, title, open]) => { const rows = cs.filter((c) => eff(c) === k); if (!rows.length) return null;
@@ -373,6 +378,7 @@ function Trace({ d }) {
   return (
     <div className="trace">
       <ol className="steps">{(d.packet.progress || []).map((s, i) => <li key={i}><b>{s.step}</b>{s.detail ? <span> · {s.detail}</span> : null}<span className="t">{new Date(s.at).toLocaleTimeString()}</span></li>)}</ol>
+      {d.usage && <p className="sub">Measured cost: <b>${(d.usage.usd || 0).toFixed(4)}</b> · {d.usage.calls} model calls · {(d.usage.input || 0).toLocaleString()} input + {(d.usage.output || 0).toLocaleString()} output tokens{d.usage.cache_read ? " · " + d.usage.cache_read.toLocaleString() + " from cache" : ""} · {d.usage.models}. Files already read before cost nothing.</p>}
       <h4>Documents</h4>
       <table className="ft"><thead><tr><th>File</th><th>Type</th><th>Read by</th><th>Status</th></tr></thead><tbody>
         {d.docs.map((x) => <tr key={x.id}><td>{x.filename}</td><td>{DOC[x.doc_type] || x.doc_type}</td><td>{x.extractor}</td><td>{x.status}{x.error ? " · " + x.error : ""}</td></tr>)}</tbody></table>
