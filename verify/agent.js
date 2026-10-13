@@ -3,15 +3,16 @@ const { db, J } = require("./store");
 const { extract, expand, mimeOf } = require("./extract");
 const { verify, docLabel, normParty } = require("./engine");
 
-let callLLM = null;
+let callLLM = null, onReady = null;
 function setLLM(fn) { callLLM = fn; }
+function setOnReady(fn) { onReady = fn; }
 
 const DEMURRAGE_PER_CONTAINER_DAY = Number(process.env.DEMURRAGE_USD_PER_DAY || 150); // assumed contract rate, shown as an assumption
 
 // ---------------- intake ----------------
 function createPacket(p) {
-  const r = db.prepare(`INSERT INTO packets(channel,message_id,from_addr,to_addr,subject,body,received_at,status,progress_json)
-    VALUES (@channel,@message_id,@from_addr,@to_addr,@subject,@body,@received_at,'received',@progress)`).run({
+  const r = db.prepare(`INSERT INTO packets(channel,message_id,from_addr,to_addr,subject,body,received_at,status,progress_json,via)
+    VALUES (@channel,@message_id,@from_addr,@to_addr,@subject,@body,@received_at,'received',@progress,@via)`).run({ via: p.via || "app",
     channel: p.channel || "email", message_id: p.message_id || null, from_addr: p.from || "", to_addr: p.to || "", subject: p.subject || "(no subject)",
     body: (p.body || "").slice(0, 4000), received_at: p.received_at || new Date().toISOString(),
     progress: JSON.stringify([{ step: "Email received", at: new Date().toISOString(), detail: (p.files || []).length + " attachment(s)" }]) });
@@ -82,6 +83,7 @@ function finish(id) {
   step(id, "Checked " + checks.length + " items", s.mismatch + " mismatch · " + s.uncertain + " uncertain · " + s.match + " match");
   db.prepare("UPDATE packets SET status='ready', shipment_ref=?, customer=?, summary_json=? WHERE id=?").run(shipmentRef, customer, JSON.stringify(s), id);
   step(id, "Drafted reply", s.mismatch + s.uncertain ? "amendment request" : "approval");
+  if (onReady) Promise.resolve(onReady(id)).catch((e) => step(id, "Could not hand the reply to the mailbox", e.message));
 }
 function reverify(id) { finish(id); }
 
@@ -121,7 +123,7 @@ function getPacket(id, level = 0) {
 }
 
 function listPackets(level = 0, channelFilter) {
-  const rows = db.prepare("SELECT id, channel, from_addr, subject, received_at, status, shipment_ref, customer, replied_at, outcome FROM packets WHERE synthetic=0 ORDER BY id DESC").all();
+  const rows = db.prepare("SELECT id, channel, via, from_addr, subject, received_at, status, shipment_ref, customer, replied_at, outcome, draft_placed_at FROM packets WHERE synthetic=0 ORDER BY id DESC").all();
   return rows.filter((r) => (channelFilter ? channelFilter.includes(r.channel) : r.channel !== "precheck")).map((r) => {
     const cs = db.prepare("SELECT status FROM checks WHERE packet_id=? AND level<=?").all(r.id, level);
     const docs = loadDocs(r.id);
@@ -247,6 +249,28 @@ function decide(packetId, checkId, cg_status, note, by = "CG") {
   db.prepare("UPDATE packets SET draft_json=NULL WHERE id=?").run(packetId); // draft regenerates from decisions unless CG edited it
   return { ok: true, proposed_fact: proposed };
 }
+// what the SU agent tells its own supplier after a pre-check (sent only to the person who asked)
+function precheckReply(id, cgAddress) {
+  const d = getPacket(id, 1);
+  const p = d.packet;
+  const open = d.checks.filter((c) => c.status === "mismatch"), unsure = d.checks.filter((c) => c.status === "uncertain");
+  const where = (c) => [...new Set((c.docs || []).map((x) => x.filename))].slice(0, 3).join(", ");
+  const n = d.docs.filter((x) => x.status !== "duplicate").length;
+  let text = "Hello,\n\nI checked your " + n + " documents" + (p.customer ? " for " + p.customer : "") + " before you send them to CG.\n";
+  if (open.length) text += "\nThese will get the set rejected. Please fix them first:\n\n" + open.map((c, i) => (i + 1) + ". " + c.subject + "\n   Found: " + c.found + "\n   Expected: " + (c.expected || "—") + "\n   In: " + where(c)).join("\n\n") + "\n";
+  if (unsure.length) text += "\nCG is likely to ask about these. Add a line of explanation in your email:\n\n" + unsure.map((c, i) => (i + 1) + ". " + c.subject + ": " + c.found).join("\n") + "\n";
+  if (!open.length && !unsure.length) text += "\nEverything matches. The set is ready for CG.\n";
+  text += "\nWhen ready, send the documents to CG at " + cgAddress + ".\n\nYour document agent (FreightMind)\nAutomatic reply to your own pre-check request. Nothing was sent to CG.";
+  const subject = "Pre-check: " + (open.length ? open.length + " issue(s) to fix" : unsure.length ? "ready, " + unsure.length + " item(s) to explain" : "ready to send") + " · " + (p.subject || "").replace(/^(re|fwd?):\s*/i, "");
+  return { to: p.from_addr, subject, text, issues: open.length, unsure: unsure.length };
+}
+function notePlaced(id, mailId) { db.prepare("UPDATE packets SET draft_mail_id=?, draft_placed_at=? WHERE id=?").run(mailId, new Date().toISOString(), id); }
+function markRepliedFromMail(id, at, subject) {
+  const p = db.prepare("SELECT replied_at FROM packets WHERE id=?").get(id); if (!p || p.replied_at) return;
+  const d = getPacket(id, 0);
+  db.prepare("UPDATE packets SET status='replied', replied_at=?, outcome=? WHERE id=?").run(at, d.draft.kind || "reply", id);
+  step(id, "CG sent the reply from Gmail", subject || "");
+}
 function saveDraft(id, draft) { db.prepare("UPDATE packets SET draft_json=? WHERE id=?").run(JSON.stringify({ ...draft, generated: false }), id); }
 function markSent(id, outcome, info) { db.prepare("UPDATE packets SET status='replied', replied_at=?, outcome=? WHERE id=?").run(new Date().toISOString(), outcome, id); step(id, "Reply sent by CG", info); }
 
@@ -261,4 +285,4 @@ function seedHistory() {
 }
 seedHistory();
 
-module.exports = { setLLM, createPacket, getPacket, listPackets, decide, saveDraft, markSent, reverify, loadDocs, tally };
+module.exports = { setLLM, setOnReady, precheckReply, notePlaced, markRepliedFromMail, step, createPacket, getPacket, listPackets, decide, saveDraft, markSent, reverify, loadDocs, tally };

@@ -1,7 +1,12 @@
-// Email as a surface: IMAP in, threaded SMTP reply out. Email stays the universal fallback channel.
+// Email as the surface. One mailbox can host several agents via plus-addressing:
+//   name@gmail.com            → CG agent (verify → draft reply in the thread; CG sends from Gmail)
+//   name+precheck@gmail.com   → SU agent (pre-check → reply to the supplier before they submit)
+// Permissions: the CG agent only ever DRAFTS (it cannot email an external party on its own).
+// The SU agent replies to the supplier who asked it (its own user), which is the only automatic send.
 const { ImapFlow } = require("imapflow");
 const { simpleParser } = require("mailparser");
 const nodemailer = require("nodemailer");
+const MailComposer = require("nodemailer/lib/mail-composer");
 const { db } = require("./store");
 
 // Credentials: env vars, or entered in the app (kept in memory only; never written to disk; gone on restart).
@@ -9,19 +14,28 @@ const runtime = { user: null, pass: null };
 // Gmail's app-password screen copies invisible non-breaking spaces; keep letters and digits only.
 const clean = (p) => String(p || "").replace(/[^A-Za-z0-9]/g, "");
 const cfg = () => ({
-  user: (runtime.user || process.env.MAIL_USER || "").trim(), pass: clean(runtime.pass || process.env.MAIL_PASS),
+  user: (runtime.user || process.env.MAIL_USER || "").trim().toLowerCase(), pass: clean(runtime.pass || process.env.MAIL_PASS),
   imapHost: process.env.IMAP_HOST || "imap.gmail.com", imapPort: Number(process.env.IMAP_PORT || 993),
-  smtpHost: process.env.SMTP_HOST || "smtp.gmail.com", smtpPort: Number(process.env.SMTP_PORT || 465),
-  folder: process.env.IMAP_FOLDER || "INBOX", everyMs: Number(process.env.IMAP_POLL_MS || 30000),
+  smtpHost: process.env.SMTP_HOST || "smtp.gmail.com",
+  folder: process.env.IMAP_FOLDER || "INBOX", everyMs: Number(process.env.IMAP_POLL_MS || 20000),
 });
 const configured = () => !!(cfg().user && cfg().pass);
-const state = { lastPoll: null, lastError: null, fetched: 0, polling: false };
+const state = { lastPoll: null, lastError: null, fetched: 0, polling: false, lastSentScan: null };
+const addresses = () => { const u = cfg().user; if (!u) return null; const [n, d] = u.split("@"); return { cg: u, precheck: n + "+precheck@" + d }; };
+const imap = () => { const c = cfg(); return new ImapFlow({ host: c.imapHost, port: c.imapPort, secure: true, auth: { user: c.user, pass: c.pass }, logger: false }); };
+const AGENT_HEADER = "X-FreightMind-Agent";
 
-async function pollOnce(onMessage) {
+function roleOf(mail) {
+  const all = [mail.to, mail.cc].filter(Boolean).flatMap((x) => x.value || []).map((a) => (a.address || "").toLowerCase());
+  for (const h of ["delivered-to", "x-original-to"]) { const v = mail.headers.get(h); if (v) all.push(String(v.text || v).toLowerCase()); }
+  return all.some((a) => a.includes("+precheck@")) ? "precheck" : "cg";
+}
+
+async function pollOnce(hooks) {
   if (!configured() || state.polling) return { skipped: true };
   state.polling = true;
   const c = cfg();
-  const client = new ImapFlow({ host: c.imapHost, port: c.imapPort, secure: true, auth: { user: c.user, pass: c.pass }, logger: false });
+  const client = imap();
   let n = 0;
   try {
     await client.connect();
@@ -35,13 +49,19 @@ async function pollOnce(onMessage) {
         const mid = mail.messageId || "uid:" + uid;
         await client.messageFlagsAdd(uid, ["\\Seen"], { uid: true }); // mark first, so a crash never processes twice
         if (db.prepare("SELECT 1 FROM packets WHERE message_id=?").get(mid)) continue;
-        const files = (mail.attachments || []).filter((a) => a.content && a.filename).map((a) => ({ filename: a.filename, bytes: a.content }));
+        const from = (mail.from && mail.from.value[0] && mail.from.value[0].address || "").toLowerCase();
+        // loop guards: never react to our own agents or to automatic mail
+        if (mail.headers.get(AGENT_HEADER.toLowerCase()) || /auto-replied|auto-generated/i.test(String(mail.headers.get("auto-submitted") || ""))) continue;
+        if (from === c.user && roleOf(mail) === "cg") continue;
+        const files = (mail.attachments || []).filter((a) => a.content && a.filename && !/^packet\.json$/i.test(a.filename)).map((a) => ({ filename: a.filename, bytes: a.content }));
         if (!files.length) continue; // no documents → not a submission
-        onMessage({ channel: "email", message_id: mid, from: mail.from && mail.from.value[0] && mail.from.value[0].address, to: c.user,
-          subject: mail.subject, body: mail.text, received_at: (mail.date || new Date()).toISOString(), files, references: mail.references });
+        const role = roleOf(mail);
+        hooks.onMessage({ channel: role === "precheck" ? "precheck" : "email", message_id: mid, from, to: role === "precheck" ? addresses().precheck : c.user,
+          subject: mail.subject, body: mail.text, received_at: (mail.date || new Date()).toISOString(), files, via: "email" });
         n++;
       }
     } finally { lock.release(); }
+    await scanSent(client, hooks).catch(() => {});
     await client.logout();
     state.lastError = null;
   } catch (e) { state.lastError = (e && (e.responseText || e.message)) || String(e); try { await client.logout(); } catch (_) {} }
@@ -49,10 +69,28 @@ async function pollOnce(onMessage) {
   return { fetched: n, error: state.lastError };
 }
 
+// CG sends from Gmail as always; we see it in Sent and record the reply time (the north-star metric).
+async function scanSent(client, hooks) {
+  const open = db.prepare("SELECT id, message_id FROM packets WHERE channel='email' AND replied_at IS NULL AND message_id LIKE '<%'").all();
+  if (!open.length) return;
+  const byMid = new Map(open.map((p) => [p.message_id, p.id]));
+  const boxes = await client.list();
+  const sent = (boxes.find((b) => b.specialUse === "\\Sent") || {}).path || "[Gmail]/Sent Mail";
+  const lock = await client.getMailboxLock(sent);
+  try {
+    const since = new Date(Date.now() - 3 * 864e5);
+    for await (const m of client.fetch({ since }, { envelope: true })) {
+      const irt = m.envelope && m.envelope.inReplyTo;
+      if (irt && byMid.has(irt)) { hooks.onReplied(byMid.get(irt), (m.envelope.date || new Date()).toISOString(), m.envelope.subject); byMid.delete(irt); }
+    }
+  } finally { lock.release(); }
+  state.lastSentScan = new Date().toISOString();
+}
+
 let started = false;
-function start(onMessage) {
+function start(hooks) {
   if (started) return; started = true;
-  const tick = () => (configured() ? pollOnce(onMessage) : Promise.resolve()).finally(() => setTimeout(tick, cfg().everyMs));
+  const tick = () => (configured() ? pollOnce(hooks) : Promise.resolve()).finally(() => setTimeout(tick, cfg().everyMs));
   setTimeout(tick, 3000);
 }
 
@@ -61,24 +99,24 @@ function hint(msg) {
   const m = String(msg || "");
   if (/AUTHENTICATIONFAILED|Invalid credentials|authentication failed|Application-specific password/i.test(m)) return "Login rejected. Check: the app password was created for THIS Gmail account; 2-Step Verification is on; the app password wasn't revoked (new ones can take 1–2 minutes).";
   if (/web browser|IMAP.*disabled|not enabled/i.test(m)) return "IMAP is off for this account. Gmail → Settings → See all settings → Forwarding and POP/IMAP → Enable IMAP → Save.";
-  if (/timeout|ETIMEDOUT|ECONNREFUSED|ENOTFOUND|EHOSTUNREACH|socket/i.test(m)) return "Could not reach imap.gmail.com:993. The network may block it; try another network.";
+  if (/timeout|ETIMEDOUT|ECONNREFUSED|ENOTFOUND|EHOSTUNREACH|socket/i.test(m)) return "Could not reach the mail server. The network may block it; try another network.";
   return null;
 }
-async function connect(user, pass, onMessage) {
+async function connect(user, pass, hooks) {
   runtime.user = String(user || "").trim(); runtime.pass = pass;
   const len = clean(pass).length;
   if (len !== 16) { runtime.user = null; runtime.pass = null; return { ok: false, error: "App password has " + len + " letters/digits after cleaning; a Gmail app password has 16.", hint: "Copy the app password again (Google Account → Security → 2-Step Verification → App passwords)." }; }
   const c = cfg();
-  const client = new ImapFlow({ host: c.imapHost, port: c.imapPort, secure: true, auth: { user: c.user, pass: c.pass }, logger: false });
+  const client = imap();
   try {
     await client.connect();
     const lock = await client.getMailboxLock(c.folder);
     let total = 0; try { total = client.mailbox.exists; } finally { lock.release(); }
     await client.logout();
     state.lastError = null;
-    start(onMessage);
-    setTimeout(() => pollOnce(onMessage), 500);
-    return { ok: true, user: c.user, inbox_messages: total };
+    start(hooks);
+    setTimeout(() => pollOnce(hooks), 500);
+    return { ok: true, user: c.user, inbox_messages: total, addresses: addresses() };
   } catch (e) {
     const msg = (e && (e.responseText || e.message)) || String(e);
     state.lastError = msg;
@@ -89,33 +127,46 @@ async function connect(user, pass, onMessage) {
 }
 function disconnect() { runtime.user = null; runtime.pass = null; state.lastError = null; }
 
-// Reply in the same thread. Only ever called from a CG click.
-async function sendReply({ to, subject, body, inReplyTo }) {
-  if (!configured()) return { sent: false, simulated: true, reason: "No mailbox connected (set MAIL_USER and MAIL_PASS). Marked as sent for the demo." };
-  const c = cfg();
-  const msg = { from: c.user, to, subject, text: body, ...(inReplyTo ? { inReplyTo, references: [inReplyTo] } : {}) };
-  try {
-    const t = nodemailer.createTransport({ host: c.smtpHost, port: c.smtpPort, secure: c.smtpPort === 465, auth: { user: c.user, pass: c.pass }, connectionTimeout: 12000, greetingTimeout: 12000 });
-    const info = await t.sendMail(msg);
-    return { sent: true, messageId: info.messageId };
-  } catch (e) {
-    // Some hosts block outgoing SMTP. Fall back to a Gmail draft in the same thread (IMAP works), so CG sends it from Gmail.
-    try { await saveDraft(msg); return { sent: false, drafted: true, reason: "SMTP unavailable here (" + e.message + "). Saved as a Gmail draft in the same thread: open Gmail → Drafts → Send." }; }
-    catch (e2) { throw new Error("SMTP failed (" + e.message + ") and saving a Gmail draft failed (" + e2.message + ")"); }
-  }
-}
-async function saveDraft(msg) {
-  const MailComposer = require("nodemailer/lib/mail-composer");
-  const raw = await new Promise((res, rej) => new MailComposer(msg).compile().build((e, m) => (e ? rej(e) : res(m))));
-  const c = cfg();
-  const client = new ImapFlow({ host: c.imapHost, port: c.imapPort, secure: true, auth: { user: c.user, pass: c.pass }, logger: false });
+const build = (msg) => new Promise((res, rej) => new MailComposer(msg).compile().build((e, m) => (e ? rej(e) : res(m))));
+const newId = () => "<fm-" + Date.now() + "-" + Math.random().toString(36).slice(2, 8) + "@freightmind>";
+
+// Put a reply draft into the sender's thread in Gmail (replacing our previous draft for that packet).
+async function placeDraft({ to, subject, text, inReplyTo, replaceId, attachments }) {
+  if (!configured()) return { placed: false, reason: "No mailbox connected" };
+  const id = newId();
+  const raw = await build({ from: cfg().user, to, subject, text, messageId: id, headers: { [AGENT_HEADER]: "cg-draft" }, attachments, ...(inReplyTo ? { inReplyTo, references: [inReplyTo] } : {}) });
+  const client = imap();
   await client.connect();
   try {
     const boxes = await client.list();
     const drafts = (boxes.find((b) => b.specialUse === "\\Drafts") || {}).path || "[Gmail]/Drafts";
+    if (replaceId) {
+      const lock = await client.getMailboxLock(drafts);
+      try { const old = await client.search({ header: { "message-id": replaceId } }, { uid: true }); if (old && old.length) await client.messageDelete(old, { uid: true }); } finally { lock.release(); }
+    }
     await client.append(drafts, raw, ["\\Draft"]);
   } finally { await client.logout(); }
+  return { placed: true, draft_id: id };
 }
 
-const status = () => ({ configured: configured(), user: configured() ? cfg().user : null, host: cfg().imapHost, source: runtime.pass ? "entered in app (memory only)" : configured() ? "environment" : null, ...state, hint: hint(state.lastError), every_s: cfg().everyMs / 1000 });
-module.exports = { start, pollOnce, sendReply, status, configured, connect, disconnect };
+// Direct send: used by the SU agent replying to its own user, or when CG explicitly clicks "Send from here".
+async function deliver({ to, subject, text, inReplyTo, attachments, agent }) {
+  if (!configured()) return { sent: false, reason: "No mailbox connected" };
+  const c = cfg();
+  const msg = { from: c.user, to, subject, text, attachments, headers: { [AGENT_HEADER]: agent || "cg", "Auto-Submitted": agent === "su-precheck" ? "auto-replied" : "no" }, ...(inReplyTo ? { inReplyTo, references: [inReplyTo] } : {}) };
+  let lastErr;
+  for (const [port, secure] of [[465, true], [587, false]]) {
+    try {
+      const t = nodemailer.createTransport({ host: c.smtpHost, port, secure, auth: { user: c.user, pass: c.pass }, connectionTimeout: 10000, greetingTimeout: 10000 });
+      const info = await t.sendMail(msg);
+      return { sent: true, messageId: info.messageId };
+    } catch (e) { lastErr = e; }
+  }
+  // outgoing SMTP blocked by the host: leave it as a draft in the thread instead
+  const d = await placeDraft({ to, subject, text, inReplyTo, attachments });
+  return { sent: false, drafted: d.placed, reason: "Outgoing mail is blocked on this server (" + (lastErr && lastErr.message) + "). Saved as a Gmail draft in the thread: open Gmail → Drafts → Send." };
+}
+
+const status = () => ({ configured: configured(), user: configured() ? cfg().user : null, addresses: configured() ? addresses() : null, mode: "drafts-only for CG",
+  host: cfg().imapHost, source: runtime.pass ? "entered in app (memory only)" : configured() ? "environment" : null, ...state, hint: hint(state.lastError), every_s: cfg().everyMs / 1000 });
+module.exports = { start, pollOnce, status, configured, connect, disconnect, placeDraft, deliver, addresses };

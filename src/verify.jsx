@@ -29,6 +29,7 @@ function App() {
   const say = (t) => { setToast(t); setTimeout(() => setToast(null), 3500); };
   const refresh = () => get("/state?level=" + level).then(setState).catch(() => {});
   useEffect(() => { refresh(); const t = setInterval(refresh, 3000); return () => clearInterval(t); }, [level]);
+  useEffect(() => { const m = (window.location.hash || "").match(/p=(\d+)/); if (m) setSel(Number(m[1])); }, []);
   useEffect(() => { if (!sel && state.packets.length) setSel(state.packets[0].id); }, [state.packets.length]);
   return (
     <div className="app">
@@ -50,7 +51,7 @@ function App() {
         <span className="lv-note">{LEVELS[level].hint}. Same documents; more data changes what the agent can check and how it ranks the work.</span>
       </div>
       {view === "cg" && <CG state={state} level={level} sel={sel} setSel={setSel} refresh={refresh} say={say} />}
-      {view === "su" && <SU level={level} say={say} goCG={(id) => { setView("cg"); setSel(id); refresh(); }} />}
+      {view === "su" && <SU level={level} say={say} prechecks={state.prechecks || []} mail={state.mail} goCG={(id) => { setView("cg"); setSel(id); refresh(); }} />}
       {view === "customer" && <Customer />}
       {view === "knowledge" && <Knowledge say={say} />}
       {toast && <div className="toast">{toast}</div>}
@@ -71,14 +72,16 @@ function MailConnect({ mail, onClose }) {
   const [pass, setPass] = useState("");
   const [busy, setBusy] = useState(false);
   const [r, setR] = useState(null);
-  const go = () => { setBusy(true); setR(null); post("/mail/connect", { user, pass }).then((x) => { setBusy(false); setR(x); if (x.ok) setTimeout(onClose, 1500); }); };
+  const go = () => { setBusy(true); setR(null); post("/mail/connect", { user, pass }).then((x) => { setBusy(false); setR(x); if (x.ok) setTimeout(onClose, 6000); }); };
   return (
     <div className="drawer-bg" onClick={onClose}><div className="modal" onClick={(e) => e.stopPropagation()}>
       <h3>Connect the CG mailbox</h3>
       <p className="sub">The agent reads new emails with attachments over IMAP and replies in the same thread over SMTP, only when you click Send. The password is kept in server memory only: not saved, and cleared on restart.</p>
       <label>Gmail address<input value={user} onChange={(e) => setUser(e.target.value)} placeholder="cg-team@gmail.com" /></label>
       <label>App password (16 characters; spaces are fine)<input type="password" value={pass} onChange={(e) => setPass(e.target.value)} /></label>
-      {r && (r.ok ? <div className="rhint">Connected to {r.user}. {r.inbox_messages} message(s) in the inbox. New emails with attachments are picked up every 30 seconds.</div>
+      {r && (r.ok ? <div className="rhint">Connected to {r.user} ({r.inbox_messages} messages). New emails with attachments are picked up every 20 seconds.<br /><br />
+          <b>Suppliers send documents to</b> {r.addresses.cg}: the CG agent checks them and leaves a draft reply in the thread.<br />
+          <b>Suppliers pre-check at</b> {r.addresses.precheck}: the supplier's agent replies with what to fix. Nothing goes to CG.</div>
         : <div className="err"><b>Gmail said:</b> {r.error}{r.hint && <><br /><b>Fix:</b> {r.hint}</>}</div>)}
       {mail && mail.lastError && !r && <div className="err"><b>Last error:</b> {mail.lastError}{mail.hint && <><br /><b>Fix:</b> {mail.hint}</>}</div>}
       <div className="row2"><button className="btn ghost" onClick={onClose}>Close</button>{mail && mail.configured && <button className="btn ghost" onClick={() => post("/mail/disconnect").then(onClose)}>Disconnect</button>}
@@ -95,6 +98,11 @@ function CG({ state, level, sel, setSel, refresh, say }) {
     <div className="cg">
       <aside className="inbox">
         <div className="inbox-head"><b>Inbox</b><span>{state.packets.length} document set(s){level >= 2 ? " · sorted by urgency" : " · newest first"}</span></div>
+        {state.mail && state.mail.configured ? <div className="addr">
+          <div><span>Suppliers send documents to</span><b>{state.mail.addresses.cg}</b></div>
+          <div><span>Pre-check before sending</span><b>{state.mail.addresses.precheck}</b></div>
+          <i>Replies wait as drafts in the Gmail thread. CG sends from Gmail as always.</i>
+        </div> : <div className="addr muted"><i>Connect the mailbox (top right) to receive documents by email. Or upload a set:</i></div>}
         <button className="btn ghost full" onClick={() => setUp(true)}>+ Upload an SU email</button>
         {state.packets.map((p) => <InboxRow key={p.id} p={p} level={level} on={sel === p.id} onClick={() => setSel(p.id)} />)}
         {!state.packets.length && <div className="empty">No document sets yet. Send an email with attachments to the connected mailbox, or upload one.</div>}
@@ -119,7 +127,7 @@ function InboxRow({ p, level, on, onClick }) {
     <button className={"row" + (on ? " on" : "")} onClick={onClick}>
       <div className="r1"><span className={"ch " + p.channel}>{p.channel === "a2a" ? "A2A" : p.channel === "email" ? "Email" : "Upload"}</span><b>{p.from_addr}</b><span className="t">{ago(p.received_at)}</span></div>
       <div className="r2">{p.subject}</div>
-      <div className="r3">{status}{level >= 2 && p.days_to_eta != null && <span className="tag muted">ETA in {p.days_to_eta}d</span>}{level >= 3 && p.risk_per_day ? <span className="tag bad-o">{money(p.risk_per_day)}/day at risk</span> : null}</div>
+      <div className="r3">{status}{p.status === "ready" && p.draft_placed_at && <span className="tag gm">Draft in Gmail</span>}{level >= 2 && p.days_to_eta != null && <span className="tag muted">ETA in {p.days_to_eta}d</span>}{level >= 3 && p.risk_per_day ? <span className="tag bad-o">{money(p.risk_per_day)}/day at risk</span> : null}</div>
     </button>);
 }
 
@@ -262,19 +270,27 @@ function Reply({ d, id, onSent, say }) {
   const [m, setM] = useState(d.draft);
   const [busy, setBusy] = useState(false);
   useEffect(() => setM(d.draft), [d.draft && d.draft.body]);
-  const sent = d.packet.status === "replied";
-  const send = () => { if (!confirm("Send this reply to " + m.to + "?")) return; setBusy(true);
-    post("/packet/" + id + "/send", m).then((r) => { setBusy(false); say(r.error ? r.error : r.sent ? "Sent in the same email thread" : r.drafted ? "Saved as a Gmail draft in the thread: send it from Gmail" : r.reason); onSent(); }); };
+  const p = d.packet;
+  const sent = p.status === "replied";
+  const viaGmail = p.via === "email" && p.channel === "email";
+  const act = (action) => { if (action === "send" && !confirm("Send this reply to " + m.to + " now?")) return; setBusy(true);
+    post("/packet/" + id + "/send", { ...m, action }).then((r) => { setBusy(false); say(r.error ? r.error : r.sent ? "Sent in the same email thread" : r.placed ? "Gmail draft updated. Send it from Gmail." : r.drafted ? "Saved as a Gmail draft in the thread" : r.reason); onSent(); }); };
   return (
     <div className="reply">
-      <div className="rhint">{m.kind === "amendment" ? "Amendment request" : "Approval"} drafted by the agent from the checks above. Every line traces to a check. <b>The agent never sends on its own.</b></div>
+      <div className="rhint">{m.kind === "amendment" ? "Amendment request" : "Approval"} drafted by the agent from the checks. Every line traces to a check. <b>The agent never sends to the supplier on its own.</b></div>
+      {viaGmail && !sent && <div className={"gmail " + (p.draft_placed_at ? "on" : "")}>{p.draft_placed_at
+        ? <>✉ This reply is already waiting as a <b>draft in the supplier's Gmail thread</b> (placed {new Date(p.draft_placed_at).toLocaleTimeString()}). Open Gmail, review, press Send. Edits here update that draft.</>
+        : <>The draft will appear in the Gmail thread once the mailbox is connected.</>}</div>}
+      {sent && <div className="gmail on">✓ Reply sent {p.replied_at && new Date(p.replied_at).toLocaleString()} · {Math.max(1, Math.round((new Date(p.replied_at) - new Date(p.received_at)) / 6e4))} min after the email arrived</div>}
       <label>To<input value={m.to || ""} onChange={(e) => setM({ ...m, to: e.target.value })} disabled={sent} /></label>
       <label>Subject<input value={m.subject || ""} onChange={(e) => setM({ ...m, subject: e.target.value })} disabled={sent} /></label>
       <textarea value={m.body || ""} onChange={(e) => setM({ ...m, body: e.target.value })} disabled={sent} rows={20} />
-      <div className="row2">
-        {!sent && <button className="btn ghost" onClick={() => post("/packet/" + id + "/draft", m).then(() => say("Draft saved"))}>Save draft</button>}
-        {!sent ? <button className="btn primary" disabled={busy} onClick={send}>{busy ? "Sending…" : "Send reply"}</button> : <span className="tag muted">Sent {d.packet.replied_at && new Date(d.packet.replied_at).toLocaleString()}</span>}
-      </div>
+      {!sent && <div className="row2">
+        {viaGmail ? <>
+          <button className="btn primary" disabled={busy} onClick={() => act("gmail_draft")}>{busy ? "Working…" : "Update Gmail draft"}</button>
+          <button className="btn ghost" disabled={busy} onClick={() => act("send")}>Send from here instead</button>
+        </> : <button className="btn primary" disabled={busy} onClick={() => act("send")}>{busy ? "Working…" : "Send reply"}</button>}
+      </div>}
     </div>);
 }
 
@@ -330,7 +346,7 @@ function Upload({ channel, onClose, onDone, title }) {
 }
 
 // ======================= SU =======================
-function SU({ level, say, goCG }) {
+function SU({ level, say, goCG, prechecks, mail }) {
   const [up, setUp] = useState(false);
   const [id, setId] = useState(null);
   const [d, setD] = useState(null);
@@ -342,6 +358,10 @@ function SU({ level, say, goCG }) {
         <div><h2>Pre-check before you send</h2><p className="sub">Your documents, checked against the same rules CG uses. Fix issues before they become an amendment cycle.</p></div>
         <button className="btn primary" onClick={() => setUp(true)}>Upload documents to pre-check</button>
       </div>
+      {mail && mail.configured && <div className="addr wide"><div><span>Email your documents to</span><b>{mail.addresses.precheck}</b></div><i>You get a reply in about a minute: what CG would reject, before you send. Nothing goes to CG.</i></div>}
+      {prechecks.length > 0 && <div className="pclist"><b>Recent pre-checks</b>{prechecks.map((x) => <button key={x.id} className={"row" + (id === x.id ? " on" : "")} onClick={() => setId(x.id)}>
+        <div className="r1"><span className={"ch " + x.channel}>{x.via === "email" ? "Email" : "Upload"}</span><b>{x.from_addr}</b><span className="t">{ago(x.received_at)}</span></div><div className="r2">{x.subject}</div>
+        <div className="r3">{x.status === "ready" ? ((x.summary.mismatch || 0) ? <span className="tag bad">{x.summary.mismatch} to fix</span> : <span className="tag ok">Ready to send</span>) : <span className="tag warn">Checking…</span>}</div></button>)}</div>}
       {!d && <div className="explain">
         <div><b>Works alone</b><p>No CG or customer adoption needed. Every rejection you avoid is a day saved and a payment that isn't held.</p></div>
         <div><b>Learns from your amendments</b><p>Corrections CG asked for before (draft → final) become rules your agent checks next time. <span className="concept">concept preview</span></p></div>

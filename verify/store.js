@@ -37,6 +37,9 @@ CREATE TABLE IF NOT EXISTS extraction_cache(sha TEXT, version TEXT, json TEXT, a
 CREATE TABLE IF NOT EXISTS system_records(kind TEXT, ref TEXT, json TEXT, source TEXT, PRIMARY KEY(kind, ref));
 `);
 
+// columns added after first release (safe on existing databases)
+for (const sql of ["ALTER TABLE packets ADD COLUMN draft_mail_id TEXT", "ALTER TABLE packets ADD COLUMN draft_placed_at TEXT", "ALTER TABLE packets ADD COLUMN via TEXT"]) { try { db.exec(sql); } catch (_) {} }
+
 // ---------------- seed configuration (only if empty) ----------------
 function seed() {
   const has = db.prepare("SELECT COUNT(*) n FROM doc_types").get().n;

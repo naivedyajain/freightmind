@@ -3,6 +3,24 @@
 Builds on Part 1: the same store, the same extractor approach, and Ask can query everything below.
 Open **`/verify.html`** (or "Verify trade documents" in the Part 1 rail).
 
+## User journeys (setup once, then everything happens in email)
+
+**Setup (CG, once):** open `/verify.html` → **Connect mailbox** → Gmail address + app password. Two addresses are now live on one mailbox:
+
+| Address | Agent | Who uses it |
+|---|---|---|
+| `name@gmail.com` | CG agent | Suppliers send their document sets here, as today |
+| `name+precheck@gmail.com` | Supplier's agent | Suppliers send here first to see what CG would reject |
+
+| Persona | Journey | What changes for them |
+|---|---|---|
+| **Supplier, no agent** | Emails documents to CG → gets CG's reply in the same thread | Nothing. The reply is clearer (field by field) and ends with the pre-check address |
+| **Supplier, with agent** | Emails documents to `+precheck` → about a minute later gets "2 issues will get this rejected" → fixes → emails CG | One extra address. Nothing reaches CG until they choose |
+| **CG** | Opens Gmail as always → the supplier's thread already holds the agent's **draft reply** → reviews (details one click away in FreightMind) → presses Send in Gmail | Reads flags instead of every field. Decisions made in FreightMind update the Gmail draft |
+| **Customer** | Opens the readiness page | Sees which shipments have documents cleared before the vessel arrives |
+
+**Permissions.** The CG agent can only create drafts; it never emails a supplier on its own. The supplier's agent replies only to the supplier who asked it. Agent emails carry an `X-FreightMind-Agent` header and `Auto-Submitted`, so agents never react to each other (no loops). The reply time is measured when CG's reply appears in Gmail's Sent folder.
+
 ## What it does
 
 ```

@@ -9,10 +9,36 @@ module.exports = function mount(app, { callWithKeys }) {
   let browserKey = null; // a key pasted in the UI is used when the server has none
   agent.setLLM((payload) => callWithKeys([process.env.ANTHROPIC_API_KEY, browserKey].filter(Boolean), payload));
   const r = express.Router();
-  r.use((req, res, next) => { const k = req.get("x-api-key"); if (k) browserKey = k; next(); });
+  let baseUrl = process.env.PUBLIC_URL || null; // for links inside emails
+  r.use((req, res, next) => { const k = req.get("x-api-key"); if (k) browserKey = k; if (!process.env.PUBLIC_URL && req.get("host")) baseUrl = (req.get("x-forwarded-proto") || req.protocol) + "://" + req.get("host"); next(); });
+  const hooks = { onMessage: agent.createPacket, onReplied: agent.markRepliedFromMail };
+
+  // When a set is verified: CG agent puts its reply as a DRAFT in the Gmail thread; SU agent answers a pre-check.
+  agent.setOnReady(async (id) => {
+    const p = db.prepare("SELECT * FROM packets WHERE id=?").get(id);
+    if (!p || p.via !== "email" || !mail.configured()) return;
+    const link = baseUrl ? "\n\n— Checks behind this reply: " + baseUrl + "/verify.html#p=" + id : "";
+    if (p.channel === "email") {
+      const d = agent.getPacket(id, 4).draft;
+      const out = await mail.placeDraft({ to: d.to, subject: d.subject, text: d.body + link, inReplyTo: p.message_id, replaceId: p.draft_mail_id });
+      if (out.placed) { agent.notePlaced(id, out.draft_id); agent.step(id, "Reply draft placed in the Gmail thread", "waiting for CG to review and send"); }
+    } else if (p.channel === "precheck") {
+      const m = agent.precheckReply(id, mail.addresses().cg);
+      const out = await mail.deliver({ to: m.to, subject: m.subject, text: m.text + link, inReplyTo: p.message_id, agent: "su-precheck" });
+      agent.step(id, out.sent ? "Pre-check result emailed to the supplier" : "Pre-check result saved as a draft", out.sent ? m.issues + " issue(s), " + m.unsure + " to explain" : out.reason);
+    }
+  });
   const lvl = (req) => Math.max(0, Math.min(4, Number(req.query.level || 0)));
 
-  r.get("/state", (req, res) => res.json({ packets: agent.listPackets(lvl(req)), mail: mail.status(), level: lvl(req) }));
+  async function refreshGmailDraft(id) {
+    const p = db.prepare("SELECT * FROM packets WHERE id=?").get(id);
+    if (!p || p.replied_at) return;
+    const d = agent.getPacket(id, 4).draft;
+    const link = baseUrl ? "\n\n— Checks behind this reply: " + baseUrl + "/verify.html#p=" + id : "";
+    const out = await mail.placeDraft({ to: d.to, subject: d.subject, text: d.body + link, inReplyTo: p.message_id, replaceId: p.draft_mail_id });
+    if (out.placed) { agent.notePlaced(id, out.draft_id); agent.step(id, "Reply draft updated in the Gmail thread", "after CG's decision"); }
+  }
+  r.get("/state", (req, res) => res.json({ packets: agent.listPackets(lvl(req)), prechecks: agent.listPackets(lvl(req), ["precheck"]).slice(0, 10), mail: mail.status(), level: lvl(req) }));
   r.get("/packet/:id", (req, res) => { const p = agent.getPacket(Number(req.params.id), lvl(req)); p ? res.json(p) : res.status(404).json({ error: "not found" }); });
   r.get("/doc/:id/file", (req, res) => {
     const d = db.prepare("SELECT filename, mime, bytes FROM documents WHERE id=?").get(Number(req.params.id));
@@ -36,18 +62,37 @@ module.exports = function mount(app, { callWithKeys }) {
     res.json({ ok: true, id });
   });
   r.post("/packet/:id/reverify", (req, res) => { agent.reverify(Number(req.params.id)); res.json({ ok: true }); });
-  r.post("/packet/:id/decide", (req, res) => { try { res.json(agent.decide(Number(req.params.id), Number(req.body.check_id), req.body.cg_status, req.body.note)); } catch (e) { res.status(400).json({ error: e.message }); } });
+  r.post("/packet/:id/decide", (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const out = agent.decide(id, Number(req.body.check_id), req.body.cg_status, req.body.note);
+      const p = db.prepare("SELECT channel, via FROM packets WHERE id=?").get(id);
+      if (p && p.channel === "email" && p.via === "email" && mail.configured()) refreshGmailDraft(id).catch(() => {}); // CG's decision updates the draft in Gmail too
+      res.json(out);
+    } catch (e) { res.status(400).json({ error: e.message }); }
+  });
   r.post("/packet/:id/draft", (req, res) => { agent.saveDraft(Number(req.params.id), req.body); res.json({ ok: true }); });
   r.post("/packet/:id/send", async (req, res) => {
     const id = Number(req.params.id);
-    const p = db.prepare("SELECT message_id, channel FROM packets WHERE id=?").get(id);
-    const { to, subject, body, kind } = req.body || {};
+    const p = db.prepare("SELECT * FROM packets WHERE id=?").get(id);
+    const { to, subject, body, kind, action } = req.body || {};
+    agent.saveDraft(id, { to, subject, body, kind });
     try {
-      const out = p.channel === "email" ? await mail.sendReply({ to, subject, body, inReplyTo: p.message_id }) : { sent: false, simulated: true, reason: p.channel === "a2a" ? "Returned to the SU agent over A2A (simulated)." : "Uploaded set: reply shown, not emailed." };
-      agent.saveDraft(id, { to, subject, body, kind });
-      agent.markSent(id, kind || "reply", out.sent ? "emailed to " + to : out.reason);
-      res.json(out);
-    } catch (e) { res.status(502).json({ error: "Send failed: " + e.message }); }
+      if (p.channel === "email" && p.via === "email" && mail.configured()) {
+        const link = baseUrl ? "\n\n— Checks behind this reply: " + baseUrl + "/verify.html#p=" + id : "";
+        if (action === "send") {
+          const out = await mail.deliver({ to, subject, text: body + link, inReplyTo: p.message_id, agent: "cg-click" });
+          if (out.sent) agent.markSent(id, kind || "reply", "sent from FreightMind to " + to);
+          return res.json(out);
+        }
+        const out = await mail.placeDraft({ to, subject, text: body + link, inReplyTo: p.message_id, replaceId: p.draft_mail_id });
+        if (out.placed) { agent.notePlaced(id, out.draft_id); agent.step(id, "Reply draft updated in the Gmail thread", "edited by CG"); }
+        return res.json({ ...out, note: "Draft updated in the Gmail thread. Send it from Gmail; we'll see it in Sent." });
+      }
+      const why = p.channel === "a2a" ? "Returned to the SU agent over A2A (simulated)." : "This set was uploaded, not emailed: reply recorded, not emailed.";
+      agent.markSent(id, kind || "reply", why);
+      res.json({ sent: false, simulated: true, reason: why });
+    } catch (e) { res.status(502).json({ error: "Mailbox error: " + e.message }); }
   });
 
   // knowledge store: proposed vs confirmed facts; humans confirm
@@ -79,10 +124,10 @@ module.exports = function mount(app, { callWithKeys }) {
   });
 
   r.get("/mail", (req, res) => res.json(mail.status()));
-  r.post("/mail/poll", async (req, res) => res.json(await mail.pollOnce(agent.createPacket)));
-  r.post("/mail/connect", async (req, res) => res.json(await mail.connect(req.body.user, req.body.pass, agent.createPacket)));
+  r.post("/mail/poll", async (req, res) => res.json(await mail.pollOnce(hooks)));
+  r.post("/mail/connect", async (req, res) => res.json(await mail.connect(req.body.user, req.body.pass, hooks)));
   r.post("/mail/disconnect", (req, res) => { mail.disconnect(); res.json({ ok: true }); });
 
   app.use("/api/v", r);
-  mail.start(agent.createPacket);
+  mail.start(hooks);
 };
