@@ -63,7 +63,10 @@ function postMessages(apiKey, payload) {
       res.on("end", () => {
         let j; try { j = JSON.parse(data); } catch (e) { return reject(new Error("Bad API response (HTTP " + res.statusCode + ")")); }
         if (j.error) { const err = new Error(j.error.message || "API error"); err.type = j.error.type; err.status = res.statusCode; return reject(err); }
-        resolve(((j.content && j.content[0] && j.content[0].text) || "").trim());
+        // join every text block (newer models can return more than one block, or a non-text block first)
+        const text = (j.content || []).filter((b) => b && b.type === "text").map((b) => b.text).join("\n").trim();
+        if (!text) { const err = new Error("Model returned no text (stop: " + (j.stop_reason || "unknown") + ")"); err.status = 502; return reject(err); }
+        resolve(text);
       });
     });
     r.on("timeout", () => r.destroy(new Error("Model call timed out")));
@@ -225,7 +228,7 @@ function askVision(apiKey, mediaType, base64Data) {
     ? { type: "document", source: { type: "base64", media_type: "application/pdf", data: base64Data } }
     : { type: "image", source: { type: "base64", media_type: mediaType, data: base64Data } };
   return callWithKeys([].concat(apiKey), {
-    max_tokens: 900,
+    max_tokens: 2000,
     messages: [{
       role: "user",
       content: [
@@ -238,12 +241,18 @@ function askVision(apiKey, mediaType, base64Data) {
           "Return exactly: { fields: { ...all fields..., charges: {...} }, confidence: { ocean_freight:.., baf:.., thc:.., documentation:.., detention:.. } }" }
       ]
     }]
-  }).then((text) => {
-    text = text.replace(/^```json\s*/i, "").replace(/^```\s*/, "").replace(/```\s*$/, "").trim();
-    const m = text.match(/\{[\s\S]*\}/); // tolerate stray prose around the JSON
-    try { return JSON.parse(m ? m[0] : text); }
-    catch (e) { throw new Error("Could not parse extraction: " + e.message); }
-  });
+  }).then(parseExtraction);
+}
+
+// read the model's JSON even if it is fenced, has text around it, or has a trailing comma
+function parseExtraction(text) {
+  let t = (text || "").replace(/```(?:json)?/gi, "").trim();
+  const a = t.indexOf("{"), b = t.lastIndexOf("}");
+  if (a === -1 || b <= a) throw new Error("Could not parse extraction: no JSON object in model reply");
+  t = t.slice(a, b + 1);
+  try { return JSON.parse(t); } catch (_) {}
+  try { return JSON.parse(t.replace(/,\s*([}\]])/g, "$1")); }
+  catch (e) { throw new Error("Could not parse extraction: " + e.message); }
 }
 
 app.post("/api/extract", async (req, res) => {
@@ -252,7 +261,10 @@ app.post("/api/extract", async (req, res) => {
   if (!apiKey.length) return res.status(400).json({ error: "No API key available." });
   if (!data || !mediaType) return res.status(400).json({ error: "No file provided." });
   try {
-    const out = await askVision(apiKey, mediaType, data);
+    let out;
+    try { out = await askVision(apiKey, mediaType, data); }
+    catch (e) { if (!/parse|no text/i.test(e.message)) throw e; out = await askVision(apiKey, mediaType, data); } // one retry
+    out = out && out.fields ? out : { fields: out || {}, confidence: (out && out.confidence) || {} }; // accept a flat reply too
     // Normalize: guarantee a FLAT confidence object keyed by charge name, no matter how the model nested it.
     const CHARGES = ["ocean_freight", "baf", "thc", "documentation", "detention"];
     const charges = (out.fields && out.fields.charges) || {};
