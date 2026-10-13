@@ -5,6 +5,7 @@ const agent = require("./agent");
 const mail = require("./mail");
 const { normParty, rulesFor } = require("./engine");
 const deskMod = require("./desk");
+const autonomy = require("./autonomy");
 
 module.exports = function mount(app, { callWithKeys }) {
   // Model key: one set in the app (memory only) wins over the server env var, then any key the browser sends.
@@ -15,7 +16,13 @@ module.exports = function mount(app, { callWithKeys }) {
   const r = express.Router();
   let baseUrl = process.env.PUBLIC_URL || null; // for links inside emails
   r.use((req, res, next) => { const k = req.get("x-api-key"); if (k) browserKey = k; if (!process.env.PUBLIC_URL && req.get("host")) baseUrl = (req.get("x-forwarded-proto") || req.protocol) + "://" + req.get("host"); next(); });
-  const hooks = { onMessage: agent.createPacket, onReplied: agent.markRepliedFromMail };
+  // a reply CG sent from Gmail counts as agreeing with the agent's proposed step
+  const replyAction = (kind) => (kind === "approval" ? "APPROVE_FORWARD" : "SEND_AMENDMENT");
+  const hooks = { onMessage: agent.createPacket, onReplied: (id, at, subject) => {
+    const before = db.prepare("SELECT replied_at FROM packets WHERE id=?").get(id);
+    agent.markRepliedFromMail(id, at, subject);
+    if (before && !before.replied_at) { const d = agent.getPacket(id, 0); autonomy.record(id, replyAction(d.draft.kind), "agreed", null, "sent from Gmail"); }
+  } };
 
   // When a set is verified: CG agent puts its reply as a DRAFT in the Gmail thread; SU agent answers a pre-check.
   agent.setOnReady(async (id) => {
@@ -92,13 +99,15 @@ module.exports = function mount(app, { callWithKeys }) {
     const id = Number(req.params.id);
     const p = db.prepare("SELECT * FROM packets WHERE id=?").get(id);
     const { to, subject, body, kind, action } = req.body || {};
+    const gen = agent.getPacket(id, 4).draft; // what the agent proposed, to measure agreement
+    const measure = () => autonomy.record(id, replyAction(kind || gen.kind), gen.generated && (body || "").trim() === (gen.body || "").trim() ? "agreed" : "edited", null, "sent by CG");
     agent.saveDraft(id, { to, subject, body, kind });
     try {
       if (p.channel === "email" && p.via === "email" && mail.configured()) {
         const link = baseUrl ? "\n\n— Checks behind this reply: " + baseUrl + "/verify.html#p=" + id : "";
         if (action === "send") {
           const out = await mail.deliver({ to, subject, text: body + link, inReplyTo: p.message_id, agent: "cg-click" });
-          if (out.sent) agent.markSent(id, kind || "reply", "sent from FreightMind to " + to);
+          if (out.sent) { agent.markSent(id, kind || "reply", "sent from FreightMind to " + to); measure(); }
           return res.json(out);
         }
         const out = await mail.placeDraft({ to, subject, text: body + link, inReplyTo: p.message_id, replaceId: p.draft_mail_id });
@@ -106,10 +115,66 @@ module.exports = function mount(app, { callWithKeys }) {
         return res.json({ ...out, note: "Draft updated in the Gmail thread. Send it from Gmail; we'll see it in Sent." });
       }
       const why = p.channel === "a2a" ? "Returned to the SU agent over A2A (simulated)." : "This set was uploaded, not emailed: reply recorded, not emailed.";
-      agent.markSent(id, kind || "reply", why);
+      agent.markSent(id, kind || "reply", why); measure();
       res.json({ sent: false, simulated: true, reason: why });
     } catch (e) { res.status(502).json({ error: "Mailbox error: " + e.message }); }
   });
+
+  // ---------- measure & automate: the logical next step on each set ----------
+  async function execAction(aid, pid, row) {
+    const d = agent.getPacket(pid, 4), p = d.packet, D = deskMod.desk();
+    const viaMail = p.via === "email" && mail.configured();
+    const link = baseUrl ? "\n\n— Checks behind this message: " + baseUrl + "/verify.html#p=" + pid : "";
+    const sign = "\n\nRegards,\n" + D.team + ", " + D.home;
+    const ref = p.shipment_ref ? "shipment " + p.shipment_ref : "your shipment";
+    const send = async (subject, text) => {
+      if (!viaMail) return false;
+      const out = await mail.deliver({ to: p.from_addr, subject, text: text + link, inReplyTo: p.message_id, agent: "next-step" });
+      if (!out.sent && !out.drafted) throw new Error(out.reason || "mail not sent");
+      return true;
+    };
+    if (aid === "SEND_AMENDMENT" || aid === "APPROVE_FORWARD") {
+      const dr = d.draft, sent = await send(dr.subject, dr.body);
+      agent.markSent(pid, dr.kind || "reply", sent ? "sent by the next-step action to " + dr.to : "recorded (this set was not emailed)");
+      return sent ? "Sent to " + dr.to : "Recorded; this set was uploaded, not emailed";
+    }
+    if (aid === "REMIND_SU") {
+      const sent = await send("Reminder: corrected documents for " + ref, "Hello,\n\nA quick reminder: we are still waiting for the corrected documents for " + ref + ". The list of corrections is in our earlier email in this thread." + sign);
+      agent.step(pid, "Reminder sent to " + p.from_addr, "next-step action, no resubmission yet");
+      return sent ? "Reminder emailed to " + p.from_addr : "Reminder recorded (set was not emailed)";
+    }
+    if (aid === "REQUEST_DOC") {
+      const sent = await send("Missing document for " + ref, "Hello,\n\n" + (row && row.title ? row.title.replace(/^Ask .* for the /, "We are missing the ") : "A required document is missing") + ". Please send it in this thread so we can complete the check." + sign);
+      agent.step(pid, "Missing document requested", p.from_addr);
+      return sent ? "Request emailed to " + p.from_addr : "Request recorded (set was not emailed)";
+    }
+    if (aid === "CONFIRM_FACT") {
+      const n = db.prepare("UPDATE facts SET status='confirmed', source=source || ' · confirmed via next step' WHERE status='proposed' AND source LIKE ?").run("CG decision on packet " + pid + "%").changes;
+      return "Confirmed " + n + " fact(s)";
+    }
+    const what = aid === "ESCALATE_LEAD" ? "Escalated to the CG team lead" : "Buyer warned about papers not final before arrival";
+    agent.step(pid, what, "in-app notification (demo channel)");
+    return what + " (in-app)";
+  }
+  setInterval(() => autonomy.tick(execAction).catch(() => {}), 30000);
+  r.get("/packet/:id/next", (req, res) => {
+    const d = agent.getPacket(Number(req.params.id), 4);
+    if (!d) return res.status(404).json({ error: "not found" });
+    res.json({ steps: d.packet.status === "ready" || d.packet.status === "replied" ? autonomy.forPacket(d) : [], undo_min: autonomy.UNDO_MIN, remind_hours: autonomy.REMIND_HOURS });
+  });
+  r.post("/packet/:id/next/:action", async (req, res) => {
+    const id = Number(req.params.id), aid = req.params.action, op = (req.body || {}).op;
+    try {
+      if (op === "undo") return res.json(autonomy.undo(Number(req.body.log_id)));
+      const d = agent.getPacket(id, 4), step = autonomy.forPacket(d).find((x) => x.action === aid);
+      if (op === "dismiss") { autonomy.record(id, aid, "rejected", step && step.title, "dismissed by CG"); return res.json({ ok: true }); }
+      const detail = await execAction(aid, id, step);
+      autonomy.record(id, aid, "agreed", step && step.title, detail);
+      res.json({ ok: true, detail });
+    } catch (e) { res.status(502).json({ error: e.message }); }
+  });
+  r.get("/autonomy", (req, res) => res.json({ actions: autonomy.all(), levels: autonomy.LEVELS, undo_min: autonomy.UNDO_MIN, touchless: autonomy.touchless() }));
+  r.post("/autonomy/:id", (req, res) => res.json(autonomy.setCap(req.params.id, req.body.cap)));
 
   // knowledge store: proposed vs confirmed facts; humans confirm
   r.get("/knowledge", (req, res) => res.json({

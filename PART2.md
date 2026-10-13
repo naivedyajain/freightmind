@@ -62,6 +62,23 @@ the supplier desk (Unilever) runs Unilever's private classification and QA rules
 (RP Investments) drops them and runs its own certificate-of-origin requirement instead.
 Code: `verify/desk.js`, `engine.rulesFor`.
 
+## Measure & automate: the next step, earned
+
+Every ready set shows a **Next step** card: the logical next action (send the amendment, remind the sender,
+ask for a missing document, warn the buyer, escalate, approve, confirm a learned rule). Every human response is
+a measurement. An action type climbs a ladder only on measured agreement, never above the ceiling its risk allows:
+
+| Level | Behaviour | Earned at |
+|---|---|---|
+| 0 Suggest | a person decides | default |
+| 1 One click | prepared; a person confirms | ≥ 90% agreement over ≥ 10 |
+| 2 Do and tell | runs after an undo window (UNDO_MIN, default 15 min) | ≥ 98% over ≥ 50 |
+| 3 Automatic | runs; shown in the audit trail | ≥ 99% over ≥ 200 |
+
+One override (an edit, a "not now", an undo) in the last 20 drops the action a level. The team lead can cap any
+action on the **Autonomy** page. Demo: sending the amendment (one click) schedules "Remind the sender" for
+REMIND_HOURS later (default 24) with Undo. Track record is seeded demo history, labelled. Code: `verify/autonomy.js`.
+
 ## Architecture: fixed; configuration: data
 
 | Fixed (code) | Data (knowledge store tables) |

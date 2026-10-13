@@ -39,9 +39,9 @@ function App() {
       <header className="top">
         <div className="brand"><b>FreightMind</b><span>Document verification</span></div>
         <nav className="views">
-          {[["cg", "CG · Validator"], ["su", "SU · Supplier"], ["customer", "Customer"], ["knowledge", "Knowledge store"]].map(([k, l]) => (
+          {[["cg", "CG · Validator"], ["su", "SU · Supplier"], ["customer", "Customer"], ["knowledge", "Knowledge store"], ["autonomy", "Autonomy"]].map(([k, l]) => (
             <button key={k} className={view === k ? "on" : ""} onClick={() => setView(k)}>{l}</button>))}
-          {view !== "knowledge" && <span className="seg">{[["work", "Work · user"], ["outcomes", "Outcomes · buyer"]].map(([k, l]) => <button key={k} className={mode === k ? "on" : ""} onClick={() => setMode(k)}>{l}</button>)}</span>}
+          {view !== "knowledge" && view !== "autonomy" && <span className="seg">{[["work", "Work · user"], ["outcomes", "Outcomes · buyer"]].map(([k, l]) => <button key={k} className={mode === k ? "on" : ""} onClick={() => setMode(k)}>{l}</button>)}</span>}
           <span className="demo-tag" title="In the product, each party signs in to its own organisation. This switch is for the demo.">demo switcher</span>
         </nav>
         <div className="right">
@@ -56,11 +56,12 @@ function App() {
         {LEVELS.map((l) => <button key={l.n} className={"lv" + (level >= l.n ? " on" : "")} onClick={() => setLevel(l.n)} title={l.hint}>{l.label}</button>)}
         <span className="lv-note">{LEVELS[level].hint}. Same documents; more data changes what the agent can check and how it ranks the work.</span>
       </div>
-      {mode === "outcomes" && view !== "knowledge" && <Outcomes party={view === "su" ? "supplier" : view} />}
+      {mode === "outcomes" && view !== "knowledge" && view !== "autonomy" && <Outcomes party={view === "su" ? "supplier" : view} />}
       {mode === "work" && view === "cg" && <CG state={state} level={level} sel={sel} setSel={setSel} refresh={refresh} say={say} />}
       {mode === "work" && view === "su" && <SU level={level} say={say} prechecks={state.prechecks || []} mail={state.mail} goCG={(id) => { setView("cg"); setSel(id); refresh(); }} />}
       {mode === "work" && view === "customer" && <Customer />}
       {view === "knowledge" && <Knowledge say={say} />}
+      {view === "autonomy" && <Autonomy say={say} />}
       {deskOpen && state.desk && <DeskPicker desk={state.desk} onClose={() => setDeskOpen(false)} onSaved={(r) => { setDeskOpen(false); say("Desk: " + r.home + " · " + r.desk + ". Re-checked " + r.rechecked + " set(s)"); refresh(); }} />}
       {toast && <div className="toast">{toast}</div>}
     </div>);
@@ -281,10 +282,64 @@ function Result({ d, level, onFocus }) {
         <div className="verdict">{(s.mismatch || s.uncertain) ? <>The agent drafted an <b>amendment request</b>. Nothing is approved while a field is uncertain.</> : <>Everything matched. The agent drafted an <b>approval</b>.</>}<br /><span className="sub">{d.docs.filter((x) => x.status === "read").length} documents · {cs.length} checks · reading confidence shown per field{d.usage && d.usage.calls ? " · read for $" + d.usage.usd.toFixed(3) + " (" + d.usage.calls + " model calls)" : ""}</span></div>
       </div>
       {d.scope && <DeskScope s={d.scope} />}
+      <NextSteps id={d.packet.id} status={d.packet.status} />
       {level >= 1 && <Enrich e={e} level={level} />}
       {groups.map(([k, title, open]) => { const rows = cs.filter((c) => eff(c) === k); if (!rows.length) return null;
         return <details key={k} open={open} className={"grp " + k}><summary><span className={"dot " + ST[k][1]}>{ST[k][0]}</span>{title} <span className="n">{rows.length}</span></summary>
           {rows.map((c) => <CheckRow key={c.id} c={c} onClick={() => onFocus(c.id)} />)}</details>; })}
+    </div>);
+}
+
+// ======================= Measure & automate =======================
+const LV_DESC = ["Suggest: a person decides", "One click: prepared, a person confirms", "Do and tell: runs after an undo window", "Automatic: runs, shown in the audit trail"];
+function Ladder({ level }) { return <span className="ladder" title={LV_DESC[level]}>{[0, 1, 2, 3].map((i) => <i key={i} className={i <= level ? "on" : ""} />)}</span>; }
+const when = (iso) => { if (!iso) return ""; const ms = Date.parse(iso) - Date.now(); if (ms <= 0) return "now"; const m = Math.round(ms / 6e4); return m < 90 ? "in " + m + " min" : "in " + Math.round(m / 60) + " h"; };
+function NextSteps({ id, status }) {
+  const [n, setN] = useState(null), [busy, setBusy] = useState(null);
+  const load = () => get("/packet/" + id + "/next").then(setN).catch(() => {});
+  useEffect(() => { load(); const t = setInterval(load, 5000); return () => clearInterval(t); }, [id, status]);
+  if (!n || !n.steps.length) return null;
+  const act = (s, op) => { setBusy(s.action + op); post("/packet/" + id + "/next/" + s.action, { op, log_id: s.log_id }).then(() => { setBusy(null); load(); }); };
+  return (
+    <div className="nextsteps">
+      <div className="ns-head"><b>Next step</b><span className="sub">The agent proposes; every response is measured. A step runs on its own only after it has earned it.</span></div>
+      {n.steps.map((s) => (
+        <div key={s.action} className={"ns-row " + s.status}>
+          <Ladder level={s.level} />
+          <div className="ns-main">
+            <div className="ns-title">{s.title}</div>
+            <div className="sub">{s.detail} · <b>{s.level_name}</b>: {s.evidence}{s.why !== "earned" ? " · " + s.why : ""}</div>
+          </div>
+          <div className="ns-act">
+            {s.status === "scheduled" && <><span className="tag warn">Runs {when(s.run_at)}</span><button className="btn ghost sm" disabled={!!busy} onClick={() => act(s, "undo")}>Undo</button></>}
+            {s.status === "done" && <span className="tag ok" title={s.result || ""}>Done{s.result ? " · " + s.result : ""}</span>}
+            {s.status === "undone" && <span className="tag muted">Undone by CG</span>}
+            {s.status === "dismissed" && <span className="tag muted">Not now</span>}
+            {s.status === "failed" && <span className="tag bad" title={s.result}>Failed</span>}
+            {s.status === "proposed" && <><button className="btn primary sm" disabled={!!busy} onClick={() => act(s, "do")}>{s.level >= 1 ? "Do it" : "Review and do"}</button><button className="btn ghost sm" disabled={!!busy} onClick={() => act(s, "dismiss")}>Not now</button></>}
+          </div>
+        </div>))}
+    </div>);
+}
+function Autonomy({ say }) {
+  const [d, setD] = useState(null);
+  const load = () => get("/autonomy").then(setD);
+  useEffect(() => { load(); }, []);
+  if (!d) return <div className="empty big">Loading…</div>;
+  return (
+    <div className="oc">
+      <div className="oc-head"><div><h2>Autonomy · measure, then automate</h2>
+        <p className="sub">Each next step the agent proposes is an action type. Every time a person accepts, edits or rejects it, that is a measurement. An action climbs the ladder only when its agreement is high enough, and never above the ceiling its risk allows. One override drops it a level; the team lead can cap any action.</p></div></div>
+      <div className="kpis2">
+        {d.levels.map((l, i) => <div key={l} className="kpi2"><span><Ladder level={i} /> {l}</span><b>{d.actions.filter((a) => a.level === i).length}</b><i>{LV_DESC[i].split(": ")[1]}{i === 2 ? " (" + d.undo_min + " min)" : ""}</i></div>)}
+      </div>
+      <table className="ft"><thead><tr><th>Action</th><th>Risk if wrong</th><th>Agreement</th><th>Level now</th><th>Why</th><th>Team lead cap</th></tr></thead><tbody>
+        {d.actions.map((a) => <tr key={a.id}><td><b>{a.name}</b><br /><span className="sub">{a.what}</span></td><td>{a.risk}<br /><span className="sub">ceiling: {d.levels[a.ceiling]}</span></td>
+          <td>{Math.round(a.rate * 1000) / 10}%<br /><span className="sub">{a.agreed} of {a.n}{a.synthetic ? " · demo history" : ""}</span></td>
+          <td><Ladder level={a.level} /> {a.level_name}</td><td className="sub">{a.why}</td>
+          <td><select value={a.cap ?? 3} onChange={(e) => post("/autonomy/" + a.id, { cap: e.target.value }).then(() => { load(); say("Cap saved for " + a.name); })}>{d.levels.map((l, i) => <option key={l} value={i}>{i === 3 ? "No cap" : "Up to " + l.toLowerCase()}</option>)}</select></td></tr>)}
+      </tbody></table>
+      <p className="sub">Earned levels: one click at ≥ 90% agreement over ≥ 10 decisions; do and tell at ≥ 98% over ≥ 50; automatic at ≥ 99% over ≥ 200. Live steps so far: {d.touchless.steps}, automatic {d.touchless.automatic}, reversed {d.touchless.reversed}.</p>
     </div>);
 }
 
