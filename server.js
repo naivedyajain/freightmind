@@ -202,6 +202,59 @@ app.get("/api/selftest", async (req, res) => {
   catch (e) { res.json({ ok: false, problem: e.message, tried: MODELS, ...info }); }
 });
 
+
+// --- answer review: rule checks (free, every answer) + model review (explanation, assumptions, verdict) ---
+const MONEY_RE = /spend|total|charge|overcharge|amount|cost|detention|freight|baf|thc|documentation|gap|billed|quoted/i;
+function ruleChecks(question, sql, cols, rows) {
+  const checks = [];
+  const add = (name, pass, detail) => checks.push({ name, pass, detail });
+  add("Returned rows", rows.length > 0, rows.length ? rows.length + " row" + (rows.length > 1 ? "s" : "") : "Empty result: the filter may be too narrow");
+  const moneyCols = cols.filter((c) => MONEY_RE.test(c));
+  const nullMoney = moneyCols.filter((c) => rows.some((r) => r[c] === null || r[c] === undefined));
+  add("No blanks in money columns", nullMoney.length === 0, nullMoney.length ? "Blank values in " + nullMoney.join(", ") : moneyCols.length ? "Checked " + moneyCols.join(", ") : "No money columns");
+  const neg = moneyCols.filter((c) => rows.some((r) => typeof r[c] === "number" && r[c] < 0 && !/gap|overcharge|diff/i.test(c)));
+  add("No negative amounts", neg.length === 0, neg.length ? "Negative values in " + neg.join(", ") : "OK");
+  const q = question.toLowerCase();
+  const wantsGroup = (q.match(/\bby (carrier|lane|origin|destination|quarter|mode|status)\b/) || [])[1];
+  if (wantsGroup) {
+    const has = cols.some((c) => c.toLowerCase().includes(wantsGroup === "lane" ? "origin" : wantsGroup) || (wantsGroup === "lane" && /lane|destination/i.test(c)));
+    add("Grouped as asked (by " + wantsGroup + ")", has, has ? "Found a " + wantsGroup + " column" : "Asked by " + wantsGroup + " but no such column in the result");
+  }
+  add("Read-only query", true, "Checked before running");
+  return checks;
+}
+
+app.post("/api/review", async (req, res) => {
+  const { question, sql, cols = [], rows = [], rowCount } = req.body || {};
+  if (!question || !sql) return res.status(400).json({ error: "Missing question or SQL" });
+  const checks = ruleChecks(question, sql, cols, rows);
+  const isMoney = MONEY_RE.test(question) || cols.some((c) => MONEY_RE.test(c));
+  const rulesFailed = checks.some((c) => !c.pass);
+  const apiKey = [process.env.ANTHROPIC_API_KEY, req.body.apiKey].filter(Boolean);
+  const trigger = isMoney ? "money answer" : rulesFailed ? "a rule check failed" : null;
+  let review = null, reviewError = null;
+  if (apiKey.length) {
+    try {
+      const text = await callWithKeys(apiKey, {
+        max_tokens: 700,
+        system:
+          "You review answers from a freight analytics assistant for a logistics manager who cannot read SQL. " +
+          "Given the question, the SQL that ran and a sample of the result, return ONLY a JSON object, no markdown:\n" +
+          '{ "explanation": one plain-English sentence on what was computed (no SQL words like JOIN or GROUP BY), ' +
+          '"assumptions": up to 3 short strings, each an interpretation the query made that the manager should know, ' +
+          '"verdict": "answers" | "partly" | "does_not", "reason": one short sentence on why }\n' +
+          "Judge strictly: if the query answers a different question, filters on something not asked, or the numbers could mislead, say so.\n\n" + SCHEMA,
+        messages: [{ role: "user", content:
+          "Question: " + question + "\n\nSQL:\n" + sql + "\n\nColumns: " + cols.join(", ") +
+          "\nRow count: " + (rowCount != null ? rowCount : rows.length) + "\nFirst rows: " + JSON.stringify(rows.slice(0, 10)) }],
+      });
+      review = parseExtraction(text);
+      if (!trigger) delete review.verdict; // judge verdict only where it matters; explanation always
+    } catch (e) { reviewError = e.message; }
+  }
+  res.json({ checks, review, judged: !!(review && review.verdict), trigger, reviewError, model: lastModel });
+});
+
 // $ at risk: every invoice charge billed above its quote, across all invoices (deterministic)
 app.get("/api/exposure", (req, res) => {
   const r = db.prepare(
@@ -219,7 +272,7 @@ app.get("/api/exposure", (req, res) => {
 });
 
 // health check
-app.get("/api/health", (req, res) => res.json({ ok: true, rows: db.prepare("SELECT COUNT(*) c FROM shipments").get().c }));
+app.get("/api/health", (req, res) => res.json({ ok: true, rows: db.prepare("SELECT COUNT(*) c FROM shipments").get().c, serverKey: !!cleanKey(process.env.ANTHROPIC_API_KEY) }));
 
 // --- vision extraction: uploaded invoice image/pdf -> structured fields ---
 function askVision(apiKey, mediaType, base64Data) {

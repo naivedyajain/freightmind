@@ -49,6 +49,23 @@ body{background:var(--bg);color:var(--ink);font-family:var(--sans);font-size:14p
 .riskn{font-size:22px;font-weight:700;font-family:var(--mono);color:#ff9b85}
 .riskl{font-size:11.5px;opacity:.8;margin-top:2px}
 .mail{white-space:pre-wrap;font-family:var(--mono);font-size:12.5px;background:#f6f8fa;border:1px solid #e5eaef;border-radius:8px;padding:12px;margin-top:8px;line-height:1.5}
+.rev{border:1px solid #e5eaef;border-radius:10px;padding:10px 12px;margin:8px 0;background:#fbfcfd;font-size:13px}
+.rev .rh{display:flex;align-items:center;gap:8px;font-weight:600;margin-bottom:6px;flex-wrap:wrap}
+.rev .badge{font-size:11.5px;padding:2px 9px;border-radius:10px;font-weight:600}
+.badge.ok{background:#e5f4ef;color:#0b6650}.badge.warn{background:#fdf1dc;color:#8a5a0a}.badge.bad{background:#fbe5e2;color:#a23a2f}.badge.wait{background:#eef1f4;color:#5b6b7a}
+.rev .expl{margin:2px 0 6px;line-height:1.45}
+.rev ul{margin:4px 0 6px 18px;padding:0}.rev li{margin:2px 0;color:#3d4b58}
+.rev .chks{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.rev .chk{font-size:11.5px;border-radius:8px;padding:3px 8px;background:#eef1f4;color:#3d4b58}
+.rev .chk.f{background:#fbe5e2;color:#a23a2f}
+.rev .small{font-size:11.5px;color:#8b98a5;margin-top:6px}
+.ov.wide{max-width:900px}
+.arch svg{width:100%;height:auto;display:block;margin:8px 0 4px}
+.ftab{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:6px}
+.ftab th{text-align:left;background:#f3f6f8;padding:7px 8px;font-weight:600}
+.ftab td{padding:7px 8px;border-top:1px solid #e5eaef;vertical-align:top}
+.tag{font-size:11px;padding:1px 7px;border-radius:8px;font-weight:600;white-space:nowrap}
+.tag.llm{background:#efe9fb;color:#5b3fa8}.tag.fix{background:#e5f4ef;color:#0b6650}.tag.both{background:#fdf1dc;color:#8a5a0a}
 .costbox{background:#0f2b24;border-radius:10px;padding:12px 13px;color:#fff}
 .costn{font-size:22px;font-weight:700;font-family:var(--mono);color:#5fe3c0}
 .costl{font-size:10.5px;color:#9dc9be;margin-top:1px}
@@ -284,7 +301,7 @@ function Card({
       className: "bub"
     }, r.answerable ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
       className: "atext"
-    }, r.rowCount === 0 ? "The query ran but nothing matched." : m.headline), chartData && /*#__PURE__*/React.createElement("div", {
+    }, r.rowCount === 0 ? "The query ran but nothing matched." : m.headline), /*#__PURE__*/React.createElement(ReviewBox, { rv: m.review }), chartData && /*#__PURE__*/React.createElement("div", {
       className: "chart"
     }, /*#__PURE__*/React.createElement(Bars, {
       data: chartData,
@@ -472,6 +489,28 @@ function Card({
   }
   return null;
 }
+function ReviewBox({ rv }) {
+  if (!rv) return null;
+  if (rv.loading) return React.createElement("div", { className: "rev" },
+    React.createElement("div", { className: "rh" }, "Checking this answer", React.createElement("span", { className: "badge wait" }, "running checks…")));
+  const failed = (rv.checks || []).filter(c => !c.pass);
+  const r = rv.review || {};
+  const v = r.verdict;
+  const vb = v === "answers" ? ["ok", "Judge: answers the question"] : v === "partly" ? ["warn", "Judge: partly answers"] : v === "does_not" ? ["bad", "Judge: does not answer"] : null;
+  return React.createElement("div", { className: "rev" },
+    React.createElement("div", { className: "rh" }, "What this means",
+      React.createElement("span", { className: "badge " + (failed.length ? "warn" : "ok") }, failed.length ? failed.length + " check" + (failed.length > 1 ? "s" : "") + " flagged" : "Rule checks passed"),
+      vb && React.createElement("span", { className: "badge " + vb[0] }, vb[1])),
+    r.explanation && React.createElement("div", { className: "expl" }, r.explanation),
+    r.assumptions && r.assumptions.length > 0 && React.createElement(React.Fragment, null,
+      React.createElement("b", { style: { fontSize: "12px" } }, "Assumptions it made"),
+      React.createElement("ul", null, r.assumptions.map((a, i) => React.createElement("li", { key: i }, a)))),
+    vb && r.reason && React.createElement("div", { className: "expl" }, React.createElement("b", null, "Why: "), r.reason),
+    React.createElement("div", { className: "chks" }, (rv.checks || []).map((c, i) => React.createElement("span", { key: i, className: "chk" + (c.pass ? "" : " f"), title: c.detail }, (c.pass ? "✓ " : "⚠ ") + c.name))),
+    React.createElement("div", { className: "small" },
+      rv.reviewError ? "Explanation and judge unavailable (" + rv.reviewError + "). Rule checks still apply."
+        : (rv.judged ? "Judge ran because: " + rv.trigger + ". " : "No verdict needed (not a money answer). ") + "Explanation by " + (rv.model || "model") + "."));
+}
 function disputeText(d) {
   const ref = d.items.map(i => i.invoice_id).filter((v, i, a) => a.indexOf(v) === i);
   const lines = d.items.map(i => "  " + i.invoice_id + " / " + i.shipment_id + " — " + i.charge + ": quoted " + money(i.quoted) + ", billed " + money(i.billed) + "  (+" + money(i.gap) + ")").join("\n");
@@ -581,6 +620,7 @@ function suggestFollows(question) {
 function App() {
   const [key, setKey] = useState(sessionStorage.getItem(KEY_LS) || "");
   const [connected, setConnected] = useState(!!sessionStorage.getItem(KEY_LS));
+  useEffect(() => { fetch(API + "/api/health").then(r => r.json()).then(h => { if (h.serverKey) setConnected(true); }).catch(() => {}); }, []);
   const [thread, setThread] = useState([{
     type: "welcome"
   }]);
@@ -660,7 +700,17 @@ function App() {
           usd: costOf(model, 600, 180).toFixed(4)
         };
         addCost(parseFloat(cost.usd));
+        const aid = Date.now() + Math.random();
+        if (j.answerable) {
+          fetch(API + "/api/review", { method: "POST", headers: { "content-type": "application/json" },
+            body: JSON.stringify({ question: q, sql: j.sql, cols: j.cols, rows: (j.rows || []).slice(0, 25), rowCount: j.rowCount, apiKey: key }) })
+            .then(r => r.json())
+            .then(rv => { addCost(parseFloat(costOf(model, 900, 200).toFixed(4))); setThread(t => t.map(x => x.id === aid ? { ...x, review: rv } : x)); })
+            .catch(e => setThread(t => t.map(x => x.id === aid ? { ...x, review: { checks: [], reviewError: e.message } } : x)));
+        }
         push({
+          id: aid,
+          review: j.answerable ? { loading: true } : null,
           type: "answer",
           result: j,
           headline: j.answerable ? `Here's what the data shows for “${q}”.` : "",
@@ -967,7 +1017,7 @@ function App() {
     className: "overlay",
     onClick: () => setPanel(null)
   }, /*#__PURE__*/React.createElement("div", {
-    className: "ov",
+    className: "ov" + (panel === "about" ? " wide" : ""),
     onClick: e => e.stopPropagation()
   }, /*#__PURE__*/React.createElement("div", {
     className: "ovx",
@@ -975,26 +1025,17 @@ function App() {
   }, "×"), panel === "about" ? /*#__PURE__*/React.createElement(About, null) : /*#__PURE__*/React.createElement(Demo, null))));
 }
 function About() {
-  return /*#__PURE__*/React.createElement("div", {
-    className: "ovc"
-  }, /*#__PURE__*/React.createElement("h2", null, "How it works"), /*#__PURE__*/React.createElement("p", {
-    className: "ovp"
-  }, "One assistant, three tables in a real SQLite database. Analytics and document extraction are two abilities of the same harness — they share one store, so a document you upload becomes data you can query a minute later."), /*#__PURE__*/React.createElement("div", {
-    className: "ontrow"
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "ont"
-  }, /*#__PURE__*/React.createElement("h4", null, "shipments"), /*#__PURE__*/React.createElement("span", null, "carrier · origin · destination · mode · status")), /*#__PURE__*/React.createElement("div", {
-    className: "ont"
-  }, /*#__PURE__*/React.createElement("h4", null, "quotes"), /*#__PURE__*/React.createElement("span", null, "what was agreed, per shipment")), /*#__PURE__*/React.createElement("div", {
-    className: "ont"
-  }, /*#__PURE__*/React.createElement("h4", null, "invoices"), /*#__PURE__*/React.createElement("span", null, "what was billed — written by extraction"))), /*#__PURE__*/React.createElement("p", {
-    className: "ovp"
-  }, /*#__PURE__*/React.createElement("b", null, "The chain:"), " ask (question → live SQL → answer) · read (document → fields → store) · link (reconcile stored invoice vs quote). Reconciliation is a JOIN on shipment_id — that join is the whole product."), /*#__PURE__*/React.createElement("p", {
-    className: "ovp"
-  }, /*#__PURE__*/React.createElement("b", null, "Trust:"), " every answer shows the SQL it ran, runs read-only, and refuses when the data can't answer. ", /*#__PURE__*/React.createElement("b", null, "Cost"), " is visible on every call because at scale it's the buying decision."), /*#__PURE__*/React.createElement("p", {
-    className: "ovp ovnote"
-  }, /*#__PURE__*/React.createElement("b", null, "Live vs roadmap:"), " live now — NL→SQL, vision extraction, reconcile, scan, the invoice-check workflow. Roadmap — connectors (shown greyed), scheduled surveillance agents, a shared skill library."));
+  return React.createElement("div", { className: "ovc" },
+    React.createElement("h2", null, "How it works"),
+    React.createElement("p", { className: "ovp" }, "The model writes queries and reads documents. The database produces every number. Known operations run as fixed code. Everything shares one store, so an uploaded invoice is queryable a minute later."),
+    React.createElement("div", { className: "arch", dangerouslySetInnerHTML: { __html: ARCH_SVG } }),
+    React.createElement("h3", { style: { margin: "14px 0 4px", fontSize: "15px" } }, "What each part does"),
+    React.createElement("div", { className: "tw" }, React.createElement("table", { className: "ftab" },
+      React.createElement("thead", null, React.createElement("tr", null, ["Capability", "What it does", "Runs on", "Why"].map((h, i) => React.createElement("th", { key: i }, h)))),
+      React.createElement("tbody", null, React.createElement("tr",{key:0},React.createElement("td",null,React.createElement("b",null,"Ask the data")),React.createElement("td",null,"Plain-English question → SQL written by the model → run read-only → answer, chart, table, SQL trace"),React.createElement("td",null,React.createElement("span",{className:"tag llm"},"Model")),React.createElement("td",null,"Open questions can't be pre-written")),React.createElement("tr",{key:1},React.createElement("td",null,React.createElement("b",null,"Review the answer")),React.createElement("td",null,"Rule checks on every answer; plain-English explanation + assumptions; judge verdict on money answers"),React.createElement("td",null,React.createElement("span",{className:"tag both"},"Both")),React.createElement("td",null,"A manager can't read SQL; trust needs a second look")),React.createElement("tr",{key:2},React.createElement("td",null,React.createElement("b",null,"Refuse")),React.createElement("td",null,"Off-topic or unsafe questions get “I can't answer that from the connected data”"),React.createElement("td",null,React.createElement("span",{className:"tag both"},"Both")),React.createElement("td",null,"A wrong number that looks right is worse than no answer")),React.createElement("tr",{key:3},React.createElement("td",null,React.createElement("b",null,"Read a document")),React.createElement("td",null,"Invoice image/PDF → fields + confidence; unreadable amounts are blank, never a guessed 0"),React.createElement("td",null,React.createElement("span",{className:"tag llm"},"Model")),React.createElement("td",null,"Documents are messy; confidence decides who checks")),React.createElement("tr",{key:4},React.createElement("td",null,React.createElement("b",null,"Human check")),React.createElement("td",null,"Low-confidence fields fixed inline before storing"),React.createElement("td",null,React.createElement("span",{className:"tag fix"},"Fixed code")),React.createElement("td",null,"People stay in the loop where the model is unsure")),React.createElement("tr",{key:5},React.createElement("td",null,React.createElement("b",null,"Reconcile")),React.createElement("td",null,"Invoice vs quote, charge by charge, with the $ gap"),React.createElement("td",null,React.createElement("span",{className:"tag fix"},"Fixed code")),React.createElement("td",null,"Known operation: must be exact and repeatable")),React.createElement("tr",{key:6},React.createElement("td",null,React.createElement("b",null,"Scan for similar")),React.createElement("td",null,"Same carrier + origin, billed above quote, across all shipments"),React.createElement("td",null,React.createElement("span",{className:"tag fix"},"Fixed code")),React.createElement("td",null,"Finds the pattern you didn't ask about")),React.createElement("tr",{key:7},React.createElement("td",null,React.createElement("b",null,"Draft dispute")),React.createElement("td",null,"Carrier email built from the rows: invoices, quoted vs billed, total"),React.createElement("td",null,React.createElement("span",{className:"tag fix"},"Fixed code")),React.createElement("td",null,"Finding money is half; claiming it is the outcome")),React.createElement("tr",{key:8},React.createElement("td",null,React.createElement("b",null,"Invoice-check workflow")),React.createElement("td",null,"Extract → reconcile → pause for approval → scan → flag"),React.createElement("td",null,React.createElement("span",{className:"tag fix"},"Fixed code")),React.createElement("td",null,"Capabilities chained, with a person at the decision")),React.createElement("tr",{key:9},React.createElement("td",null,React.createElement("b",null,"Money at risk")),React.createElement("td",null,"Total billed above quote across all invoices"),React.createElement("td",null,React.createElement("span",{className:"tag fix"},"Fixed code")),React.createElement("td",null,"The number a CFO cares about")),React.createElement("tr",{key:10},React.createElement("td",null,React.createElement("b",null,"Cost meter + model picker")),React.createElement("td",null,"Cost per call, projection per 1,000; picking haiku routes to the cheaper model"),React.createElement("td",null,React.createElement("span",{className:"tag both"},"Both")),React.createElement("td",null,"At scale, cost decides the purchase"))))),
+    React.createElement("p", { className: "ovp ovnote", style: { marginTop: "12px" } }, React.createElement("b", null, "Live vs roadmap: "), "live now: everything in the table. Roadmap: connectors (TMS, ERP, carrier portals, email), asking back on ambiguous questions, scheduled surveillance agents, golden-set eval page."));
 }
+const ARCH_SVG = '<svg viewBox="0 0 860 560" xmlns="http://www.w3.org/2000/svg" font-family="Inter,system-ui,sans-serif"><defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" fill="#5b6b7a"/></marker></defs><rect x="300" y="8" width="260" height="46" rx="10" fill="#0f2b24"/><text x="430" y="29" text-anchor="middle" fill="#fff" font-size="14" font-weight="700">Logistics manager</text><text x="430" y="45" text-anchor="middle" fill="#9fd9c8" font-size="11">asks · uploads · approves</text><line x1="430" y1="54" x2="430" y2="80" stroke="#5b6b7a" stroke-width="1.5" marker-end="url(#ar)"/><rect x="150" y="82" width="560" height="50" rx="10" fill="#fff" stroke="#c9d3dc"/><text x="430" y="103" text-anchor="middle" fill="#1d2a36" font-size="14" font-weight="700">One chat thread  +  capability rail</text><text x="430" y="121" text-anchor="middle" fill="#5b6b7a" font-size="11">answers · charts · SQL trace · review · money at risk · cost meter</text><line x1="430" y1="132" x2="430" y2="158" stroke="#5b6b7a" stroke-width="1.5" marker-end="url(#ar)"/><rect x="20" y="160" width="820" height="250" rx="12" fill="#f6f8fa" stroke="#c9d3dc"/><text x="36" y="182" fill="#1d2a36" font-size="13" font-weight="700">Server (Node / Express): every capability is one endpoint</text><rect x="36" y="196" width="190" height="88" rx="9" fill="#efe9fb" stroke="#b7a6e6"/><text x="131" y="218" text-anchor="middle" fill="#3f2b85" font-size="13" font-weight="700">Ask the data</text><text x="131" y="236" text-anchor="middle" fill="#3f2b85" font-size="11">question → model writes SQL</text><text x="131" y="252" text-anchor="middle" fill="#3f2b85" font-size="11">→ guardrail → run</text><text x="131" y="270" text-anchor="middle" fill="#3f2b85" font-size="10.5">/api/ask</text><rect x="240" y="196" width="190" height="88" rx="9" fill="#efe9fb" stroke="#b7a6e6"/><text x="335" y="218" text-anchor="middle" fill="#3f2b85" font-size="13" font-weight="700">Review the answer</text><text x="335" y="236" text-anchor="middle" fill="#3f2b85" font-size="11">rule checks (free)</text><text x="335" y="252" text-anchor="middle" fill="#3f2b85" font-size="11">+ explain + judge (money)</text><text x="335" y="270" text-anchor="middle" fill="#3f2b85" font-size="10.5">/api/review</text><rect x="444" y="196" width="190" height="88" rx="9" fill="#efe9fb" stroke="#b7a6e6"/><text x="539" y="218" text-anchor="middle" fill="#3f2b85" font-size="13" font-weight="700">Read a document</text><text x="539" y="236" text-anchor="middle" fill="#3f2b85" font-size="11">invoice image/PDF → fields</text><text x="539" y="252" text-anchor="middle" fill="#3f2b85" font-size="11">+ confidence per charge</text><text x="539" y="270" text-anchor="middle" fill="#3f2b85" font-size="10.5">/api/extract</text><rect x="648" y="196" width="178" height="88" rx="9" fill="#fff" stroke="#c9d3dc" stroke-dasharray="4 3"/><text x="737" y="222" text-anchor="middle" fill="#1d2a36" font-size="12" font-weight="700">Human check</text><text x="737" y="240" text-anchor="middle" fill="#5b6b7a" font-size="11">low-confidence fields</text><text x="737" y="256" text-anchor="middle" fill="#5b6b7a" font-size="11">fixed before storing;</text><text x="737" y="272" text-anchor="middle" fill="#5b6b7a" font-size="11">workflow pauses to approve</text><rect x="36" y="298" width="790" height="64" rx="9" fill="#e5f4ef" stroke="#8fcfba"/><text x="431" y="320" text-anchor="middle" fill="#0b6650" font-size="13" font-weight="700">Fixed code, no model call: same input → same answer, cheap, auditable</text><text x="431" y="342" text-anchor="middle" fill="#0b6650" font-size="11.5">Reconcile invoice vs quote · Scan for similar · Invoice-check workflow · Draft dispute · Money at risk</text><text x="431" y="356" text-anchor="middle" fill="#0b6650" font-size="10.5">/api/reconcile · /api/scan · /api/run-workflow · /api/exposure</text><rect x="36" y="372" width="790" height="28" rx="7" fill="#fff" stroke="#c9d3dc"/><text x="431" y="391" text-anchor="middle" fill="#3d4b58" font-size="11.5">Guardrails: read-only query check · DB opened read-only · key cleanup + fallback · model fallback · 45s timeout · cost per call</text><line x1="300" y1="410" x2="300" y2="446" stroke="#5b6b7a" stroke-width="1.5" marker-end="url(#ar)"/><line x1="560" y1="446" x2="560" y2="410" stroke="#5b6b7a" stroke-width="1.5" marker-end="url(#ar)"/><text x="290" y="432" text-anchor="end" fill="#5b6b7a" font-size="10.5">reads</text><text x="570" y="432" fill="#5b6b7a" font-size="10.5">writes extracted invoices</text><rect x="150" y="448" width="560" height="92" rx="12" fill="#fff" stroke="#1d2a36" stroke-width="1.5"/><text x="430" y="472" text-anchor="middle" fill="#1d2a36" font-size="14" font-weight="700">One store: SQLite</text><rect x="172" y="484" width="160" height="42" rx="7" fill="#f3f6f8"/><text x="252" y="502" text-anchor="middle" font-size="12" font-weight="700" fill="#1d2a36">shipments</text><text x="252" y="517" text-anchor="middle" font-size="10" fill="#5b6b7a">carrier · lane · status</text><rect x="350" y="484" width="160" height="42" rx="7" fill="#f3f6f8"/><text x="430" y="502" text-anchor="middle" font-size="12" font-weight="700" fill="#1d2a36">quotes</text><text x="430" y="517" text-anchor="middle" font-size="10" fill="#5b6b7a">what was agreed</text><rect x="528" y="484" width="160" height="42" rx="7" fill="#f3f6f8"/><text x="608" y="502" text-anchor="middle" font-size="12" font-weight="700" fill="#1d2a36">invoices</text><text x="608" y="517" text-anchor="middle" font-size="10" fill="#5b6b7a">what was billed + confidence</text><rect x="760" y="448" width="88" height="92" rx="10" fill="#efe9fb" stroke="#b7a6e6"/><text x="804" y="482" text-anchor="middle" font-size="12" font-weight="700" fill="#3f2b85">Claude</text><text x="804" y="499" text-anchor="middle" font-size="10" fill="#3f2b85">SQL · vision</text><text x="804" y="514" text-anchor="middle" font-size="10" fill="#3f2b85">explain · judge</text><line x1="804" y1="448" x2="804" y2="412" stroke="#b7a6e6" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#ar)"/><rect x="20" y="546" width="12" height="10" rx="2" fill="#efe9fb" stroke="#b7a6e6"/><text x="38" y="555" font-size="10.5" fill="#5b6b7a">uses the model</text><rect x="140" y="546" width="12" height="10" rx="2" fill="#e5f4ef" stroke="#8fcfba"/><text x="158" y="555" font-size="10.5" fill="#5b6b7a">fixed code</text></svg>';
 function Demo() {
   const s = [["Ask “what did we spend by carrier?”", "Live SQL, real chart, trace shows the query. Spend looks normal — no villain yet."], ["Ask “which carrier overcharges us most on detention?”", "The model writes a 3-table join live and finds Pacific: $3,450 across 5 shipments. I didn't pre-write that."], ["Upload the sample invoice (or your own)", "Vision reads it into fields. The detention field is low-confidence — I fix it inline, then store."], ["Ask a follow-up chip", "Follow-ups appear under each answer — I follow my train of thought, no re-typing."], ["Run the invoice-check workflow", "A saved chain runs: extract → reconcile → pause for approval → scan → flag. The harness holding for a human is the point."], ["Watch the cost meter the whole time", "Every call's cost ticks up, with a per-1,000 projection. At scale, cost is the decision."]];
   return /*#__PURE__*/React.createElement("div", {
